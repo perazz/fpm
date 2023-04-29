@@ -1,5 +1,5 @@
 module fpm_os
-    use, intrinsic :: iso_c_binding, only: c_char, c_int, c_null_char, c_ptr, c_associated
+    use, intrinsic :: iso_c_binding, only: c_char, c_int, c_null_char, c_ptr, c_associated, c_size_t
     use fpm_filesystem, only: exists, join_path, get_home
     use fpm_environment, only: os_is_unix
     use fpm_error, only: error_t, fatal_error
@@ -39,6 +39,16 @@ module fpm_os
             type(c_ptr) :: path
         end function getcwd_
 
+#if defined(_WIN32) || defined(_WIN64) || defined(__MSYS__) || defined(__MINGW64__) || defined(__MINGW32__)
+        !> Determine the absolute, canonicalized path for a given path. Windows only.
+        function _fullpath(resolved_path, path, maxLength) result(ptr) bind(C,name="_fullpath")
+            import :: c_ptr, c_char, c_int, c_size_t
+            character(kind=c_char, len=1), intent(out) :: resolved_path(*)
+            character(kind=c_char, len=1), intent(in) :: path(*)
+            integer(c_size_t), value, intent(in) :: maxLength
+            type(c_ptr) :: ptr
+        end function _fullpath
+#else
         !> Determine the absolute, canonicalized path for a given path. Unix-only.
         function realpath(path, resolved_path) result(ptr) bind(C)
             import :: c_ptr, c_char, c_int
@@ -46,6 +56,7 @@ module fpm_os
             character(kind=c_char, len=1), intent(out) :: resolved_path(*)
             type(c_ptr) :: ptr
         end function realpath
+#endif
 
         !> Determine the absolute, canonicalized path for a given path.
         !> Calls custom C routine and is able to distinguish between Unix and Windows.
@@ -146,8 +157,12 @@ contains
         allocate (cpath(buffersize))
 
 ! The _WIN32 macro is currently not exported using gfortran.
-#if defined(FPM_BOOTSTRAP) && !defined(_WIN32)
+#if defined(FPM_BOOTSTRAP)
+#if defined(_WIN32) || defined(_WIN64) || defined(__MSYS__) || defined(__MINGW64__) || defined(__MINGW32__)
+        ptr = _fullpath(cpath, appended_path, buffersize)
+#else
         ptr = realpath(appended_path, cpath)
+#endif
 #else
         ptr = c_realpath(appended_path, cpath, buffersize)
 #endif
