@@ -48,6 +48,9 @@ module fpm_manifest_metapackages
         !> fortran-lang minpack
         type(metapackage_request_t) :: minpack
 
+        !> fortran-lang fftpack
+        type(metapackage_request_t) :: fftpack
+
     end type metapackage_config_t
 
 
@@ -170,6 +173,9 @@ contains
         call new_request(self%minpack, "minpack", table, error)
         if (allocated(error)) return
 
+        call new_request(self%fftpack, "fftpack", table, error)
+        if (allocated(error)) return
+
         call new_request(self%mpi, "mpi", table, error)
         if (allocated(error)) return
 
@@ -184,7 +190,7 @@ contains
         select case (key)
 
             !> Supported metapackages
-            case ("openmp","stdlib","mpi","minpack")
+            case ("openmp","stdlib","mpi","minpack","fftpack")
                 is_meta_package = .true.
 
             case default

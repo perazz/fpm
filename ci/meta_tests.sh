@@ -32,13 +32,18 @@ pushd metapackage_minpack
 "$fpm" run --verbose
 popd
 
+pushd metapackage_fftpack
+"$fpm" build --verbose
+"$fpm" run --verbose
+popd
+
 pushd metapackage_mpi
-"$fpm" build --verbose 
+"$fpm" build --verbose
 "$fpm" run --verbose
 popd
 
 pushd metapackage_mpi_c
-"$fpm" build --verbose 
+"$fpm" build --verbose
 "$fpm" run --verbose
 popd
 

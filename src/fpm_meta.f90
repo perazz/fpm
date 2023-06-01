@@ -19,7 +19,7 @@ use fpm_compiler
 use fpm_model
 use fpm_command_line
 use fpm_manifest_dependency, only: dependency_config_t
-use fpm_git, only : git_target_branch, git_target_tag
+use fpm_git, only : git_target_branch, git_target_tag, git_target_revision
 use fpm_manifest, only: package_config_t
 use fpm_environment, only: get_env,os_is_unix
 use fpm_filesystem, only: run, get_temp_filename, getline, exists, canon_path, is_dir, get_dos_path
@@ -156,6 +156,7 @@ subroutine init_from_name(this,name,compiler,error)
         case("openmp");  call init_openmp (this,compiler,error)
         case("stdlib");  call init_stdlib (this,compiler,error)
         case("minpack"); call init_minpack(this,compiler,error)
+        case("fftpack"); call init_fftpack(this,compiler,error)
         case("mpi");     call init_mpi    (this,compiler,error)
         case default
             call syntax_error(error, "Package "//name//" is not supported in [metapackages]")
@@ -217,7 +218,7 @@ subroutine init_openmp(this,compiler,error)
 
 end subroutine init_openmp
 
-!> Initialize minpack metapackage for the current system
+!> Initialize fortran-lang/minpack metapackage for the current system
 subroutine init_minpack(this,compiler,error)
     class(metapackage_t), intent(inout) :: this
     type(compiler_t), intent(in) :: compiler
@@ -231,7 +232,7 @@ subroutine init_minpack(this,compiler,error)
 
     allocate(this%dependency(1))
 
-    !> 1) minpack. There are no true releases currently. Fetch HEAD
+    !> Fetch release v2.0.0-rc.1
     this%dependency(1)%name = "minpack"
     this%dependency(1)%git = git_target_tag("https://github.com/fortran-lang/minpack", "v2.0.0-rc.1")
     if (.not.allocated(this%dependency(1)%git)) then
@@ -240,6 +241,31 @@ subroutine init_minpack(this,compiler,error)
     end if
 
 end subroutine init_minpack
+
+!> Initialize fortran-lang/fftpack metapackage for the current system
+subroutine init_fftpack(this,compiler,error)
+    class(metapackage_t), intent(inout) :: this
+    type(compiler_t), intent(in) :: compiler
+    type(error_t), allocatable, intent(out) :: error
+
+    !> Cleanup
+    call destroy(this)
+
+    !> fftpack is queried as a dependency from the official repository
+    this%has_dependencies = .true.
+
+    allocate(this%dependency(1))
+
+    !> There are no true releases currently. Fetch the fpm-0.8.0+ compatibility PR
+    this%dependency(1)%name = "fftpack"
+    this%dependency(1)%git = git_target_revision("https://github.com/fortran-lang/fftpack", &
+                                                 "b3431fcc9ba5fc0dc70d088ef7e9d7ffe7d8f126")
+    if (.not.allocated(this%dependency(1)%git)) then
+        call fatal_error(error,'cannot initialize git repo dependency for fftpack metapackage')
+        return
+    end if
+
+end subroutine init_fftpack
 
 !> Initialize stdlib metapackage for the current system
 subroutine init_stdlib(this,compiler,error)
@@ -433,9 +459,15 @@ subroutine resolve_metapackage_model(model,package,settings,error)
         if (allocated(error)) return
     endif
 
-    ! stdlib
+    ! minpack
     if (package%meta%minpack%on) then
         call add_metapackage_model(model,package,settings,"minpack",error)
+        if (allocated(error)) return
+    endif
+
+    ! minpack
+    if (package%meta%fftpack%on) then
+        call add_metapackage_model(model,package,settings,"fftpack",error)
         if (allocated(error)) return
     endif
 
@@ -514,17 +546,24 @@ subroutine init_mpi(this,compiler,error)
         if (allocated(error)) return
 
         !> Request Fortran implicit typing
-        if (mpilib(LANG_FORTRAN)/=MPI_TYPE_INTEL) then
-            allocate(this%fortran)
-            this%fortran%implicit_typing   = .true.
-            this%fortran%implicit_external = .true.
-        endif
+        if (mpilib(LANG_FORTRAN)/=MPI_TYPE_INTEL) call request_implicit_fortran(this)
 
     end if
 
     1 format('MPI wrappers found: fortran=',i0,' c=',i0,' c++=',i0)
 
 end subroutine init_mpi
+
+!> Request Fortran implicit typing
+subroutine request_implicit_fortran(this)
+    class(metapackage_t), intent(inout) :: this
+
+    if (.not.allocated(this%fortran)) allocate(this%fortran)
+    this%fortran%implicit_typing   = .true.
+    this%fortran%implicit_external = .true.
+    this%fortran%source_form = "default"
+
+end subroutine request_implicit_fortran
 
 !> Check if we're on a 64-bit environment
 !> Accept answer from https://stackoverflow.com/questions/49141093/get-system-information-with-fortran
@@ -704,9 +743,7 @@ logical function msmpi_init(this,compiler,error) result(found)
         end if use_prebuilt
 
         !> Request Fortran implicit typing
-        allocate(this%fortran)
-        this%fortran%implicit_typing = .true.
-        this%fortran%implicit_external = .true.
+        call request_implicit_fortran(this)
 
         ! gfortran>=10 is incompatible with the old-style mpif.h MS-MPI headers.
         ! If so, add flags to allow old-style BOZ constants in mpif.h
