@@ -94,7 +94,7 @@ integer, parameter :: MPI_TYPE_MSMPI   = 4
 public             :: MPI_TYPE_NAME
 
 !> Debugging information
-logical, parameter, private :: verbose = .false.
+logical, parameter, private :: verbose = .true.
 
 integer, parameter, private :: LANG_FORTRAN = 1
 integer, parameter, private :: LANG_C       = 2
