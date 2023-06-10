@@ -478,7 +478,8 @@ subroutine init_mpi(this,compiler,error)
 
     call wrapper_compiler_fit(fort_wrappers,c_wrappers,cpp_wrappers,compiler,wcfit,mpilib,error)
 
-    if (allocated(error) .or. all(wcfit==0)) then
+    if (allocated(error) .or. all(wcfit==0) .or. &
+        (get_os_type()==OS_WINDOWS .and. compiler%is_gnu())) then
 
         !> No wrapper compiler fit. Are we on Windows? use MSMPI-specific search
         found = msmpi_init(this,compiler,error)

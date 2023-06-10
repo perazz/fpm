@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'src/*meta*.f90'  # On push, only launch job if something has changed in the metapackages
+      - 'src/fpm_meta.f90'
       - 'src/fpm/*meta*.f90'
       - 'src/fpm/manifest/*meta*.f90'
       - 'src/ci/meta_tests.sh'
