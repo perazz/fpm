@@ -18,7 +18,6 @@ fortran-regex.git  = "https://github.com/perazz/fortran-regex"
 fortran-regex.tag  = "1.1.2"
 jonquil.git = "https://github.com/toml-f/jonquil"
 jonquil.rev = "4fbd4cf34d577c0fd25e32667ee9e41bf231ece8"
-openmp = "*"
 
 [[test]]
 name = "cli-test"
