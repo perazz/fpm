@@ -26,15 +26,15 @@ jobs:
         include:
         - os: ubuntu-latest
           os-arch: linux-x86_64
-          release-flags: --flag '--static -g -fbacktrace -O3'
+          release-flags: --flag '--static -g -fbacktrace -O3 -fopenmp'
 
         - os: macos-11
           os-arch: macos-x86_64
-          release-flags: --flag '-g -fbacktrace -O3'
+          release-flags: --flag '-g -fbacktrace -O3 -fopenmp'
 
         - os: windows-latest
           os-arch: windows-x86_64
-          release-flags: --flag '--static -g -fbacktrace -O3'
+          release-flags: --flag '--static -g -fbacktrace -O3 -fopenmp'
           exe: .exe
 
     env:

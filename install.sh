@@ -85,7 +85,7 @@ if [ -z ${FC+x} ]; then
     FC="gfortran"
 fi
 if [ -z ${FFLAGS+x} ]; then
-    FFLAGS="-g -fbacktrace -O3"
+    FFLAGS="-g -fbacktrace -O3 -fopenmp"
 fi
 
 mkdir -p $BOOTSTRAP_DIR
