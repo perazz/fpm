@@ -102,6 +102,8 @@ jobs:
         ${{ env.BOOTSTRAP }} run
         ${{ env.BOOTSTRAP }} run -- --version
         ${{ env.BOOTSTRAP }} run -- --help
+      env: 
+        OMP_STACKSIZE: 4M
 
     - name: Test Fortran fpm (bootstrap)
       shell: bash
