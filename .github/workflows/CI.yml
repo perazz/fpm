@@ -157,6 +157,8 @@ jobs:
         ${{ env.FPM }} run ${{ matrix.release-flags }}
         ${{ env.FPM }} run ${{ matrix.release-flags }} -- --version
         ${{ env.FPM }} run ${{ matrix.release-flags }} -- --help
+      env: 
+        OMP_STACKSIZE: 4M
 
     - name: Test Fortran fpm
       shell: bash
