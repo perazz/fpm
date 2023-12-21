@@ -1583,10 +1583,10 @@ type(string_t) function mpi_wrapper_query(mpilib,wrapper,command,verbose,error) 
 
            select case (mpilib)
               case (MPI_TYPE_OPENMPI,MPI_TYPE_MPICH,MPI_TYPE_MSMPI,MPI_TYPE_INTEL)
-                 call get_mpi_runner(screen,verbose,error)
+                  call get_mpi_runner(screen,verbose,error)
               case default
-                 call fatal_error(error,unsupported_msg)
-                 return
+                  call fatal_error(error,unsupported_msg)
+                  return
            end select
 
        case default;
