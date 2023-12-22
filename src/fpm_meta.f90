@@ -625,7 +625,7 @@ logical function msmpi_init(this,compiler,error) result(found)
         ! Check that the runtime is installed
         bindir = ""
         call get_absolute_path(get_env('MSMPI_BIN'),bindir,error)
-        if (verbose) print *, '+ %MSMPI_BIN%=',bindir
+        if (verbose) print *, '+ %MSMPI_BIN%=',bindir,' error? ',allocated(error)
 
         ! In some environments, variable %MSMPI_BIN% is missing (i.e. in GitHub Action images).
         ! Do a second attempt: search for the default location

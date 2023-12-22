@@ -152,7 +152,7 @@ jobs:
       if: contains(matrix.os,'windows') && contains(matrix.mpi,'msmpi')
       run: |
         echo "C:\Program Files\Microsoft MPI\Bin\" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-        echo "MSMPI_BIN=/c/Program\ Files/Microsoft\ MPI/Bin/" | Out-File -FilePath $env:GITHUB_ENV -Append
+        echo "MSMPI_BIN=C:\Program Files\Microsoft MPI\Bin\" | Out-File -FilePath $env:GITHUB_ENV -Append
 
     - name: (Windows) load OneAPI environment variables
       if: contains(matrix.os,'windows') && contains(matrix.mpi,'intel')
