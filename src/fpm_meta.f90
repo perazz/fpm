@@ -618,7 +618,7 @@ logical function msmpi_init(this,compiler,error) result(found)
 
             !> Not working on 32-bit Windows yet
             call fatal_error(error,'MS-MPI error: this package requires 64-bit Windows environment')
-            retun
+            return
 
         end if
 
