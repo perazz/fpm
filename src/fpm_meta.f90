@@ -100,7 +100,7 @@ integer, parameter :: MPI_TYPE_MSMPI   = 4
 public             :: MPI_TYPE_NAME
 
 !> Debugging information
-logical, parameter, private :: verbose = .false.
+logical, parameter, private :: verbose = .true.
 
 integer, parameter, private :: LANG_FORTRAN = 1
 integer, parameter, private :: LANG_C       = 2
@@ -618,7 +618,7 @@ logical function msmpi_init(this,compiler,error) result(found)
 
             !> Not working on 32-bit Windows yet
             call fatal_error(error,'MS-MPI error: this package requires 64-bit Windows environment')
-            return
+            retun
 
         end if
 
@@ -632,6 +632,7 @@ logical function msmpi_init(this,compiler,error) result(found)
         if (len_trim(bindir)<=0 .or. allocated(error)) then
             if (verbose) print *, '+ %MSMPI_BIN% empty, searching C:\Program Files\Microsoft MPI\Bin\ ...'
             call get_absolute_path('C:\Program Files\Microsoft MPI\Bin\mpiexec.exe',bindir,error)
+            if (verbose .and. allocated(error)) print *, '+ search ended with error: ',error%message
         endif
 
         ! Do a third attempt: search for mpiexec.exe in PATH location
@@ -639,6 +640,7 @@ logical function msmpi_init(this,compiler,error) result(found)
             if (verbose) print *, '+ C:\Program Files\Microsoft MPI\Bin\ not found. searching %PATH%...'
 
             call get_mpi_runner(runner_path,verbose,error)
+            if (verbose .and. allocated(error)) print *, '+ %PATH% search ended with error: ',error%message
 
             if (.not.allocated(error)) then
                if (verbose) print *, '+ mpiexec found: ',runner_path%s
