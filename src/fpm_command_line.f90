@@ -768,7 +768,9 @@ contains
         integer :: i
         
         ! Skip validation if build_dir is empty (will use default)
-        if (len_trim(build_dir) == 0) return
+        if (len_trim(build_dir) == 0) then 
+            call fpm_stop(1, 'Error: Missing bild directory.')                        
+        end if
         
         ! Normalize the build directory path
         normalized_build_dir = canon_path(build_dir)
