@@ -202,6 +202,51 @@ logical function has_comparison_operator(condition)
     has_comparison_operator = index(condition, '==') > 0 .or. index(condition, '!=') > 0
 end function has_comparison_operator
 
+!> Parse #if or #elif condition (handles defined(), !defined(), comparisons, and simple macros)
+subroutine parse_if_condition(lower_line, line, offset, heading_blanks, preprocess_macros, defined_macros, is_active, macro_name)
+    character(*), intent(in) :: lower_line, line
+    integer, intent(in) :: offset, heading_blanks
+    type(string_t), optional, intent(in) :: preprocess_macros(:), defined_macros(:)
+    logical, intent(out) :: is_active
+    character(:), allocatable, intent(out) :: macro_name
+
+    integer :: start_pos, end_pos
+    character(:), allocatable :: condition
+
+    if (index(lower_line, 'defined(') > 0) then
+        ! #if/#elif defined(MACRO) or !defined(MACRO)
+        start_pos = index(lower_line, 'defined(') + 8
+        end_pos = index(lower_line(start_pos:), ')') - 1
+
+        start_pos = start_pos + heading_blanks
+        end_pos = end_pos + heading_blanks
+
+        if (end_pos > 0) then
+            macro_name = line(start_pos:start_pos + end_pos - 1)
+            is_active = macro_in_list(macro_name, preprocess_macros) .or. &
+                        macro_in_list(macro_name, defined_macros)
+            if (index(lower_line, '!defined(') > 0) is_active = .not. is_active
+        else
+            is_active = .false.
+            macro_name = ""
+        end if
+    else
+        condition = trim(adjustl(lower_line(offset:)))
+
+        if (has_comparison_operator(condition)) then
+            call parse_macro_comparison(condition, preprocess_macros, defined_macros, is_active, macro_name)
+        else
+            ! Simple macro check
+            start_pos = offset + heading_blanks
+            end_pos = len_trim(lower_line) + heading_blanks
+            macro_name = trim(adjustl(line(start_pos:end_pos)))
+            is_active = macro_in_list(macro_name, preprocess_macros) .or. &
+                        macro_in_list(macro_name, defined_macros)
+        end if
+    end if
+
+end subroutine parse_if_condition
+
 !> Append lines to a dynamic string array
 subroutine append_lines(array, new_lines)
     type(string_t), allocatable, intent(inout) :: array(:)
@@ -427,8 +472,7 @@ subroutine parse_cpp_condition(lower_line, line, preprocess, is_active, macro_na
     logical, intent(out) :: is_active
     type(string_t), optional, intent(in) :: defined_macros(:)
 
-    integer :: start_pos, end_pos, heading_blanks, i
-    character(:), allocatable :: condition
+    integer :: start_pos, heading_blanks, i
 
     ! Always active if CPP preprocessor is not active
     if (.not. present(preprocess)) then
@@ -456,103 +500,28 @@ subroutine parse_cpp_condition(lower_line, line, preprocess, is_active, macro_na
 
     ! There are macros: test if active
     if (index(lower_line, '#ifdef') == 1) then
-        ! #ifdef MACRO
         start_pos = index(lower_line, ' ') + heading_blanks + 1
-
-        ! Pick non-lowercase macro name
         macro_name = trim(adjustl(line(start_pos:)))
-        is_active = macro_defined(macro_name, preprocess%macros, defined_macros)
+        is_active = macro_in_list(macro_name, preprocess%macros) .or. &
+                    macro_in_list(macro_name, defined_macros)
 
     elseif (index(lower_line, '#ifndef') == 1) then
-        ! #ifndef MACRO
         start_pos = index(lower_line, ' ') + heading_blanks + 1
         macro_name = trim(adjustl(line(start_pos:)))
-        is_active = .not. macro_defined(macro_name, preprocess%macros, defined_macros)
+        is_active = .not. (macro_in_list(macro_name, preprocess%macros) .or. &
+                           macro_in_list(macro_name, defined_macros))
 
     elseif (index(lower_line, '#if ') == 1) then
-        ! Handle various #if patterns
-        if (index(lower_line, 'defined(') > 0) then
-            ! #if defined(MACRO) or #if !defined(MACRO)
-            start_pos = index(lower_line, 'defined(') + 8
-            end_pos = index(lower_line(start_pos:), ')') - 1
+        call parse_if_condition(lower_line, line, 4, heading_blanks, &
+                                preprocess%macros, defined_macros, is_active, macro_name)
 
-            start_pos = start_pos+heading_blanks
-            end_pos   = end_pos+heading_blanks
-
-            if (end_pos > 0) then
-                macro_name = line(start_pos:start_pos + end_pos - 1)
-                if (index(lower_line, '!defined(') > 0) then
-                    is_active = .not. macro_defined(macro_name, preprocess%macros, defined_macros)
-                else
-                    is_active = macro_defined(macro_name, preprocess%macros, defined_macros)
-                end if
-            else
-                ! More complex condition
-                is_active = .false.
-            end if
-        else
-            ! Check for comparison operators: == or !=
-            condition = trim(adjustl(lower_line(4:)))
-
-            if (has_comparison_operator(condition)) then
-                call parse_macro_comparison(condition, preprocess%macros, defined_macros, is_active, macro_name)
-            else
-                ! #if MACRO (simple macro check)
-                start_pos = 4 + heading_blanks ! Skip "#if "
-                end_pos = len_trim(lower_line) + heading_blanks
-                macro_name = trim(adjustl(line(start_pos:end_pos)))
-                is_active = macro_defined(macro_name, preprocess%macros, defined_macros)
-            end if
-        end if
     elseif (index(lower_line, '#elif') == 1) then
-        ! #elif defined(MACRO) or #elif !defined(MACRO)
-        if (index(lower_line, 'defined(') > 0) then
-            start_pos = index(lower_line, 'defined(') + 8
-            end_pos   = index(lower_line(start_pos:), ')') - 1
-
-            start_pos = start_pos + heading_blanks
-            end_pos   = end_pos + heading_blanks
-
-            if (end_pos > 0) then
-                macro_name = line(start_pos:start_pos + end_pos - 1)
-                if (index(lower_line, '!defined(') > 0) then
-                    is_active = .not. macro_defined(macro_name, preprocess%macros, defined_macros)
-                else
-                    is_active = macro_defined(macro_name, preprocess%macros, defined_macros)
-                end if
-            else
-                is_active = .false.
-                macro_name = ""
-            end if
-        else
-            ! Check for comparison operators in #elif
-            condition = trim(adjustl(lower_line(6:)))
-
-            if (has_comparison_operator(condition)) then
-                call parse_macro_comparison(condition, preprocess%macros, defined_macros, is_active, macro_name)
-            else
-                ! simple form: #elif MACRO
-                start_pos = 6 + heading_blanks  ! skip "#elif "
-                end_pos   = len_trim(lower_line) + heading_blanks
-                macro_name = trim(adjustl(line(start_pos:end_pos)))
-                is_active = macro_defined(macro_name, preprocess%macros, defined_macros)
-            end if
-        end if
+        call parse_if_condition(lower_line, line, 6, heading_blanks, &
+                                preprocess%macros, defined_macros, is_active, macro_name)
     else
         is_active = .false.
+        macro_name = ""
     end if
-
-contains
-
-    !> Check if macro is defined in either preprocess macros or include macros
-    logical function macro_defined(name, preprocess_macros, inc_macros)
-        character(*), intent(in) :: name
-        type(string_t), optional, intent(in) :: preprocess_macros(:)
-        type(string_t), optional, intent(in) :: inc_macros(:)
-
-        macro_defined = macro_in_list(name, preprocess_macros) .or. &
-                        macro_in_list(name, inc_macros)
-    end function macro_defined
 
 end subroutine parse_cpp_condition
 
