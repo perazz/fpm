@@ -24,7 +24,7 @@ use fpm_model, only: srcfile_t, &
                     FPM_UNIT_CSOURCE, FPM_UNIT_CHEADER, FPM_SCOPE_UNKNOWN, &
                     FPM_SCOPE_DEP, FPM_SCOPE_APP, FPM_SCOPE_TEST, FPM_UNIT_CPPSOURCE
 use fpm_manifest_preprocess, only: preprocess_config_t
-use fpm_filesystem, only: read_lines, read_lines_expanded, exists
+use fpm_filesystem, only: read_lines, read_lines_expanded, exists, dirname, join_path, parent_dir
 implicit none
 
 private
@@ -58,16 +58,244 @@ logical function macro_in_list(macro_name, macros)
 
 end function macro_in_list
 
+!> Get the value of a macro from the macros list
+!> Returns empty string if macro is not defined
+!> Macros are stored as "NAME" (defined, no value) or "NAME=VALUE"
+function get_macro_value(macro_name, macros, found) result(value)
+    character(*), intent(in) :: macro_name
+    type(string_t), intent(in), optional :: macros(:)
+    logical, intent(out), optional :: found
+    character(:), allocatable :: value
+
+    integer :: i, eq_pos
+    character(:), allocatable :: name_part
+
+    value = ""
+    if (present(found)) found = .false.
+    if (.not. present(macros)) return
+
+    do i = 1, size(macros)
+        eq_pos = index(macros(i)%s, '=')
+        if (eq_pos > 0) then
+            ! Macro with value: "NAME=VALUE"
+            name_part = macros(i)%s(1:eq_pos-1)
+            if (lower(name_part) == lower(macro_name)) then
+                value = macros(i)%s(eq_pos+1:)
+                if (present(found)) found = .true.
+                return
+            end if
+        else
+            ! Macro without value: "NAME" (treated as defined but empty value)
+            if (lower(macros(i)%s) == lower(macro_name)) then
+                value = ""
+                if (present(found)) found = .true.
+                return
+            end if
+        end if
+    end do
+
+end function get_macro_value
+
+!> Read source file lines with include files embedded inline
+!> Replaces both CPP `#include "file"` and Fortran `include "file"` with file contents
+!> Searches in: source directory, ../include (default fpm include dir)
+function read_lines_with_includes(filename) result(lines)
+    character(*), intent(in) :: filename
+    type(string_t), allocatable :: lines(:)
+
+    type(string_t), allocatable :: file_lines(:), include_lines(:), result_lines(:)
+    character(:), allocatable :: line_lower, include_name, include_path, source_dir, pkg_dir
+    integer :: i, n_lines, stat, ic
+    logical :: is_include
+
+    file_lines = read_lines_expanded(filename)
+    if (.not. allocated(file_lines)) then
+        allocate(lines(0))
+        return
+    end if
+    if (size(file_lines) == 0) then
+        allocate(lines(0))
+        return
+    end if
+
+    source_dir = parent_dir(filename)
+    pkg_dir = parent_dir(source_dir)
+
+    ! First pass: count total lines including embedded includes
+    n_lines = 0
+    do i = 1, size(file_lines)
+        line_lower = adjustl(lower(file_lines(i)%s))
+        is_include = .false.
+        include_name = ""
+
+        ! Check for CPP #include directive: #include "file"
+        if (index(line_lower, '#include') == 1 .and. index(file_lines(i)%s, '"') > 0) then
+            include_name = split_n(file_lines(i)%s, n=2, delims='"', stat=stat)
+            if (stat == 0) is_include = .true.
+        ! Check for Fortran include statement: include "file" or include 'file'
+        elseif (index(line_lower, 'include') == 1) then
+            ic = index(lower(file_lines(i)%s), 'include')
+            if (index(adjustl(file_lines(i)%s(ic+7:)), '"') == 1 .or. &
+                index(adjustl(file_lines(i)%s(ic+7:)), "'") == 1) then
+                include_name = split_n(file_lines(i)%s, n=2, delims="'"//'"', stat=stat)
+                if (stat == 0) is_include = .true.
+            end if
+        end if
+
+        if (is_include .and. len_trim(include_name) > 0) then
+            include_path = find_include_file(include_name, source_dir, pkg_dir)
+            if (len_trim(include_path) > 0) then
+                include_lines = read_lines(include_path)
+                if (allocated(include_lines)) then
+                    n_lines = n_lines + size(include_lines)
+                    cycle
+                end if
+            end if
+        end if
+
+        n_lines = n_lines + 1
+    end do
+
+    ! Second pass: build result with includes embedded
+    allocate(result_lines(n_lines))
+    n_lines = 0
+    do i = 1, size(file_lines)
+        line_lower = adjustl(lower(file_lines(i)%s))
+        is_include = .false.
+        include_name = ""
+
+        ! Check for CPP #include directive: #include "file"
+        if (index(line_lower, '#include') == 1 .and. index(file_lines(i)%s, '"') > 0) then
+            include_name = split_n(file_lines(i)%s, n=2, delims='"', stat=stat)
+            if (stat == 0) is_include = .true.
+        ! Check for Fortran include statement: include "file" or include 'file'
+        elseif (index(line_lower, 'include') == 1) then
+            ic = index(lower(file_lines(i)%s), 'include')
+            if (index(adjustl(file_lines(i)%s(ic+7:)), '"') == 1 .or. &
+                index(adjustl(file_lines(i)%s(ic+7:)), "'") == 1) then
+                include_name = split_n(file_lines(i)%s, n=2, delims="'"//'"', stat=stat)
+                if (stat == 0) is_include = .true.
+            end if
+        end if
+
+        if (is_include .and. len_trim(include_name) > 0) then
+            include_path = find_include_file(include_name, source_dir, pkg_dir)
+            if (len_trim(include_path) > 0) then
+                include_lines = read_lines(include_path)
+                if (allocated(include_lines)) then
+                    result_lines(n_lines+1:n_lines+size(include_lines)) = include_lines
+                    n_lines = n_lines + size(include_lines)
+                    cycle
+                end if
+            end if
+        end if
+
+        n_lines = n_lines + 1
+        result_lines(n_lines) = file_lines(i)
+    end do
+
+    lines = result_lines
+
+contains
+
+    !> Find include file in standard locations
+    function find_include_file(name, src_dir, pkg_dir) result(path)
+        character(*), intent(in) :: name, src_dir, pkg_dir
+        character(:), allocatable :: path
+
+        ! Try source directory first
+        path = join_path(src_dir, name)
+        if (exists(path)) return
+
+        ! Try package's include directory (../include from source dir)
+        path = join_path(pkg_dir, join_path("include", name))
+        if (exists(path)) return
+
+        ! Not found
+        path = ""
+    end function find_include_file
+
+end function read_lines_with_includes
+
+!> Parse a #define directive and extract macro name and optional value
+!> Returns macro in "NAME=VALUE" or "NAME" format, empty string if not a #define
+function parse_define_directive(line) result(macro)
+    character(*), intent(in) :: line
+    character(:), allocatable :: macro
+
+    character(:), allocatable :: line_lower, macro_name, macro_value
+    integer :: start_pos, end_pos
+
+    macro = ""
+    line_lower = adjustl(lower(line))
+
+    if (index(line_lower, '#define') /= 1) return
+
+    ! Extract macro name and optional value
+    ! Format: #define NAME or #define NAME VALUE
+    start_pos = 8
+    do while (start_pos <= len(line) .and. line(start_pos:start_pos) == ' ')
+        start_pos = start_pos + 1
+    end do
+
+    ! Find end of macro name (space or end of line)
+    end_pos = start_pos
+    do while (end_pos <= len(line) .and. line(end_pos:end_pos) /= ' ')
+        end_pos = end_pos + 1
+    end do
+    end_pos = end_pos - 1
+
+    if (end_pos < start_pos) return
+
+    macro_name = line(start_pos:end_pos)
+
+    ! Check for value after the name
+    start_pos = end_pos + 1
+    do while (start_pos <= len(line) .and. line(start_pos:start_pos) == ' ')
+        start_pos = start_pos + 1
+    end do
+
+    if (start_pos <= len(line)) then
+        macro_value = trim(line(start_pos:))
+        macro = macro_name // '=' // macro_value
+    else
+        macro = macro_name
+    end if
+
+end function parse_define_directive
+
+!> Add a macro to a macros array (grows the array)
+subroutine add_macro(macros, macro)
+    type(string_t), allocatable, intent(inout) :: macros(:)
+    character(*), intent(in) :: macro
+
+    type(string_t), allocatable :: new_macros(:)
+    integer :: n
+
+    if (.not. allocated(macros)) then
+        allocate(macros(1))
+        macros(1)%s = macro
+    else
+        n = size(macros)
+        allocate(new_macros(n + 1))
+        new_macros(1:n) = macros
+        new_macros(n + 1)%s = macro
+        call move_alloc(new_macros, macros)
+    end if
+
+end subroutine add_macro
+
 !> Start a CPP conditional block (active or inactive)
-subroutine start_cpp_block(blk, lower_line, line, preprocess)
+subroutine start_cpp_block(blk, lower_line, line, preprocess, defined_macros)
     type(cpp_block), intent(inout) :: blk
     character(*), intent(in) :: lower_line, line
     type(preprocess_config_t), optional, intent(in) :: preprocess
-    
+    type(string_t), optional, intent(in) :: defined_macros(:)
+
     logical :: is_active
     character(:), allocatable :: macro_name
-    
-    call parse_cpp_condition(lower_line, line, preprocess, is_active, macro_name)
+
+    call parse_cpp_condition(lower_line, line, preprocess, is_active, macro_name, defined_macros)
     
     blk%depth = blk%depth + 1
     
@@ -117,79 +345,123 @@ subroutine handle_else_block(blk)
 end subroutine handle_else_block
 
 !> Parse CPP conditional directive and determine if block should be active
-subroutine parse_cpp_condition(lower_line, line, preprocess, is_active, macro_name)
+!> defined_macros: optional additional macros from #define directives in source/includes
+subroutine parse_cpp_condition(lower_line, line, preprocess, is_active, macro_name, defined_macros)
     character(*), intent(in) :: lower_line, line
     type(preprocess_config_t), optional, intent(in) :: preprocess
     character(:), allocatable, intent(out) :: macro_name
     logical, intent(out) :: is_active
-    integer :: start_pos, end_pos, heading_blanks, i
-    
+    type(string_t), optional, intent(in) :: defined_macros(:)
+
+    integer :: start_pos, end_pos, heading_blanks, i, eq_pos, neq_pos
+    character(:), allocatable :: condition, lhs, rhs, macro_value
+    logical :: is_equality, is_inequality, macro_found
+
     ! Always active if CPP preprocessor is not active
     if (.not. present(preprocess)) then
         is_active = .true.
         macro_name = ""
         return
     endif
-    
+
     ! If CPP is not enabled, always active
     if (.not. preprocess%is_cpp()) then
         is_active = .true.
         macro_name = ""
         return
     endif
-    
+
     ! Find offset between lowercase adjustl and standard line
     heading_blanks = 0
     do i=1,len(line)
-        if (line(i:i)==' ') then 
+        if (line(i:i)==' ') then
             heading_blanks = heading_blanks+1
         else
             exit
         end if
-    end do    
-    
-    ! There are macros: test if active    
+    end do
+
+    ! There are macros: test if active
     if (index(lower_line, '#ifdef') == 1) then
         ! #ifdef MACRO
         start_pos = index(lower_line, ' ') + heading_blanks + 1
-        
+
         ! Pick non-lowercase macro name
         macro_name = trim(adjustl(line(start_pos:)))
-        is_active = macro_in_list(macro_name, preprocess%macros)
-        
+        is_active = macro_defined(macro_name, preprocess%macros, defined_macros)
+
     elseif (index(lower_line, '#ifndef') == 1) then
-        ! #ifndef MACRO  
+        ! #ifndef MACRO
         start_pos = index(lower_line, ' ') + heading_blanks + 1
         macro_name = trim(adjustl(line(start_pos:)))
-        is_active = .not. macro_in_list(macro_name, preprocess%macros)
-        
+        is_active = .not. macro_defined(macro_name, preprocess%macros, defined_macros)
+
     elseif (index(lower_line, '#if ') == 1) then
         ! Handle various #if patterns
         if (index(lower_line, 'defined(') > 0) then
             ! #if defined(MACRO) or #if !defined(MACRO)
             start_pos = index(lower_line, 'defined(') + 8
             end_pos = index(lower_line(start_pos:), ')') - 1
-            
+
             start_pos = start_pos+heading_blanks
             end_pos   = end_pos+heading_blanks
-            
+
             if (end_pos > 0) then
                 macro_name = line(start_pos:start_pos + end_pos - 1)
                 if (index(lower_line, '!defined(') > 0) then
-                    is_active = .not. macro_in_list(macro_name, preprocess%macros)
+                    is_active = .not. macro_defined(macro_name, preprocess%macros, defined_macros)
                 else
-                    is_active = macro_in_list(macro_name, preprocess%macros)
+                    is_active = macro_defined(macro_name, preprocess%macros, defined_macros)
                 end if
             else
                 ! More complex condition
                 is_active = .false.
             end if
         else
-            ! #if MACRO (simple macro check)
-            start_pos = 4 + heading_blanks ! Skip "#if "
-            end_pos = len_trim(lower_line) + heading_blanks
-            macro_name = trim(adjustl(line(start_pos:end_pos)))
-            is_active = macro_in_list(macro_name, preprocess%macros)
+            ! Check for comparison operators: == or !=
+            condition = trim(adjustl(lower_line(4:)))
+            eq_pos = index(condition, '==')
+            neq_pos = index(condition, '!=')
+
+            is_equality = eq_pos > 0 .and. (neq_pos == 0 .or. eq_pos < neq_pos)
+            is_inequality = neq_pos > 0 .and. (eq_pos == 0 .or. neq_pos < eq_pos)
+
+            if (is_equality .or. is_inequality) then
+                ! #if MACRO == VALUE or #if MACRO != VALUE
+                if (is_equality) then
+                    lhs = trim(adjustl(condition(1:eq_pos-1)))
+                    rhs = trim(adjustl(condition(eq_pos+2:)))
+                else
+                    lhs = trim(adjustl(condition(1:neq_pos-1)))
+                    rhs = trim(adjustl(condition(neq_pos+2:)))
+                end if
+
+                macro_name = lhs
+
+                ! Get macro value - first check defined_macros, then preprocess%macros
+                macro_value = get_macro_value(lhs, defined_macros, macro_found)
+                if (.not. macro_found) then
+                    macro_value = get_macro_value(lhs, preprocess%macros, macro_found)
+                end if
+
+                if (.not. macro_found) then
+                    ! Macro not defined - condition is false per CPP behavior
+                    is_active = .false.
+                else
+                    ! Compare values (case-insensitive for robustness)
+                    if (is_equality) then
+                        is_active = lower(macro_value) == lower(rhs)
+                    else
+                        is_active = lower(macro_value) /= lower(rhs)
+                    end if
+                end if
+            else
+                ! #if MACRO (simple macro check)
+                start_pos = 4 + heading_blanks ! Skip "#if "
+                end_pos = len_trim(lower_line) + heading_blanks
+                macro_name = trim(adjustl(line(start_pos:end_pos)))
+                is_active = macro_defined(macro_name, preprocess%macros, defined_macros)
+            end if
         end if
     elseif (index(lower_line, '#elif') == 1) then
         ! #elif defined(MACRO) or #elif !defined(MACRO)
@@ -203,25 +475,72 @@ subroutine parse_cpp_condition(lower_line, line, preprocess, is_active, macro_na
             if (end_pos > 0) then
                 macro_name = line(start_pos:start_pos + end_pos - 1)
                 if (index(lower_line, '!defined(') > 0) then
-                    is_active = .not. macro_in_list(macro_name, preprocess%macros)
+                    is_active = .not. macro_defined(macro_name, preprocess%macros, defined_macros)
                 else
-                    is_active = macro_in_list(macro_name, preprocess%macros)
+                    is_active = macro_defined(macro_name, preprocess%macros, defined_macros)
                 end if
             else
                 is_active = .false.
                 macro_name = ""
             end if
         else
-            ! simple form: #elif MACRO
-            start_pos = 6 + heading_blanks  ! skip "#elif "
-            end_pos   = len_trim(lower_line) + heading_blanks
-            macro_name = trim(adjustl(line(start_pos:end_pos)))
-            is_active = macro_in_list(macro_name, preprocess%macros)
+            ! Check for comparison operators in #elif
+            condition = trim(adjustl(lower_line(6:)))
+            eq_pos = index(condition, '==')
+            neq_pos = index(condition, '!=')
+
+            is_equality = eq_pos > 0 .and. (neq_pos == 0 .or. eq_pos < neq_pos)
+            is_inequality = neq_pos > 0 .and. (eq_pos == 0 .or. neq_pos < eq_pos)
+
+            if (is_equality .or. is_inequality) then
+                if (is_equality) then
+                    lhs = trim(adjustl(condition(1:eq_pos-1)))
+                    rhs = trim(adjustl(condition(eq_pos+2:)))
+                else
+                    lhs = trim(adjustl(condition(1:neq_pos-1)))
+                    rhs = trim(adjustl(condition(neq_pos+2:)))
+                end if
+
+                macro_name = lhs
+
+                macro_value = get_macro_value(lhs, defined_macros, macro_found)
+                if (.not. macro_found) then
+                    macro_value = get_macro_value(lhs, preprocess%macros, macro_found)
+                end if
+
+                if (.not. macro_found) then
+                    is_active = .false.
+                else
+                    if (is_equality) then
+                        is_active = lower(macro_value) == lower(rhs)
+                    else
+                        is_active = lower(macro_value) /= lower(rhs)
+                    end if
+                end if
+            else
+                ! simple form: #elif MACRO
+                start_pos = 6 + heading_blanks  ! skip "#elif "
+                end_pos   = len_trim(lower_line) + heading_blanks
+                macro_name = trim(adjustl(line(start_pos:end_pos)))
+                is_active = macro_defined(macro_name, preprocess%macros, defined_macros)
+            end if
         end if
     else
         is_active = .false.
     end if
-    
+
+contains
+
+    !> Check if macro is defined in either preprocess macros or include macros
+    logical function macro_defined(name, preprocess_macros, inc_macros)
+        character(*), intent(in) :: name
+        type(string_t), optional, intent(in) :: preprocess_macros(:)
+        type(string_t), optional, intent(in) :: inc_macros(:)
+
+        macro_defined = macro_in_list(name, preprocess_macros) .or. &
+                        macro_in_list(name, inc_macros)
+    end function macro_defined
+
 end subroutine parse_cpp_condition
 
 !> Parsing of free-form fortran source files
@@ -269,7 +588,9 @@ function parse_f_source(f_filename,error,preprocess) result(f_source)
     integer :: fh, n_use, n_include, n_mod, n_parent, i, j, ic, pass
     type(cpp_block) :: cpp_blk
     type(string_t), allocatable :: file_lines(:), file_lines_lower(:)
+    type(string_t), allocatable :: defined_macros(:)
     character(:), allocatable :: temp_string, mod_name, string_parts(:)
+    character(:), allocatable :: parsed_macro
 
     if (.not. exists(f_filename)) then
         call file_not_found_error(error, f_filename)
@@ -277,12 +598,17 @@ function parse_f_source(f_filename,error,preprocess) result(f_source)
     end if
 
     f_source%file_name = f_filename
-    
+
     ! Only use conditional parsing if preprocessing is enabled with CPP
     cpp_conditional_parsing = .false.
     if (present(preprocess)) cpp_conditional_parsing = preprocess%is_cpp()
-        
-    file_lines = read_lines_expanded(f_filename)
+
+    ! Read file with #include directives expanded inline (for CPP parsing)
+    if (cpp_conditional_parsing) then
+        file_lines = read_lines_with_includes(f_filename)
+    else
+        file_lines = read_lines_expanded(f_filename)
+    end if
 
     ! for efficiency in parsing make a lowercase left-adjusted copy of the file
     ! Need a copy because INCLUDE (and #include) file arguments are case-sensitive
@@ -320,28 +646,38 @@ function parse_f_source(f_filename,error,preprocess) result(f_source)
                     if (index(file_lines_lower(i)%s,'#ifdef') == 1 .or. &
                         index(file_lines_lower(i)%s,'#ifndef') == 1 .or. &
                         index(file_lines_lower(i)%s,'#if ') == 1) then
-                        
+
                         ! Determine if this conditional block should be active
-                        call start_cpp_block(cpp_blk, file_lines_lower(i)%s, file_lines(i)%s, preprocess)
-                        
+                        call start_cpp_block(cpp_blk, file_lines_lower(i)%s, file_lines(i)%s, preprocess, defined_macros)
+
                     elseif (index(file_lines_lower(i)%s,'#endif') == 1) then
-                        
+
                         call end_cpp_block(cpp_blk)
-                        
+
                     elseif (index(file_lines_lower(i)%s,'#else') == 1) then
-                        
+
                         call handle_else_block(cpp_blk)
-                        
+
                     elseif (index(file_lines_lower(i)%s,'#elif') == 1) then
-                        
+
                         ! Treat #elif as #else followed by #if
                         call handle_else_block(cpp_blk)
-                        call start_cpp_block(cpp_blk, file_lines_lower(i)%s, file_lines(i)%s, preprocess)
-                        
+                        call start_cpp_block(cpp_blk, file_lines_lower(i)%s, file_lines(i)%s, preprocess, defined_macros)
+
+                    elseif (index(file_lines_lower(i)%s,'#define') == 1) then
+
+                        ! Parse #define and add to defined_macros (only if not in inactive block)
+                        if (.not. cpp_blk%inside_inactive_block) then
+                            parsed_macro = parse_define_directive(file_lines(i)%s)
+                            if (len_trim(parsed_macro) > 0) then
+                                call add_macro(defined_macros, parsed_macro)
+                            end if
+                        end if
+
                     end if
-                    
+
                 end if
-                
+
                 ! Skip all preprocessor directive lines (both old and new behavior)
                 cycle
                 
