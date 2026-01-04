@@ -148,6 +148,60 @@ function get_macro_value(macro_name, macros, found) result(value)
 
 end function get_macro_value
 
+!> Parse a macro comparison condition (MACRO == VALUE or MACRO != VALUE)
+!> Returns is_active based on comparison result, macro_name is set to the LHS
+subroutine parse_macro_comparison(condition, preprocess_macros, defined_macros, is_active, macro_name)
+    character(*), intent(in) :: condition
+    type(string_t), optional, intent(in) :: preprocess_macros(:)
+    type(string_t), optional, intent(in) :: defined_macros(:)
+    logical, intent(out) :: is_active
+    character(:), allocatable, intent(out) :: macro_name
+
+    integer :: eq_pos, neq_pos
+    logical :: is_equality, macro_found
+    character(:), allocatable :: lhs, rhs, macro_value
+
+    eq_pos = index(condition, '==')
+    neq_pos = index(condition, '!=')
+
+    is_equality = eq_pos > 0 .and. (neq_pos == 0 .or. eq_pos < neq_pos)
+
+    if (is_equality) then
+        lhs = trim(adjustl(condition(1:eq_pos-1)))
+        rhs = trim(adjustl(condition(eq_pos+2:)))
+    else
+        lhs = trim(adjustl(condition(1:neq_pos-1)))
+        rhs = trim(adjustl(condition(neq_pos+2:)))
+    end if
+
+    macro_name = lhs
+
+    ! Get macro value - first check defined_macros, then preprocess_macros
+    macro_value = get_macro_value(lhs, defined_macros, macro_found)
+    if (.not. macro_found) then
+        macro_value = get_macro_value(lhs, preprocess_macros, macro_found)
+    end if
+
+    if (.not. macro_found) then
+        ! Macro not defined - condition is false per CPP behavior
+        is_active = .false.
+    else
+        ! Compare values (case-insensitive)
+        if (is_equality) then
+            is_active = lower(macro_value) == lower(rhs)
+        else
+            is_active = lower(macro_value) /= lower(rhs)
+        end if
+    end if
+
+end subroutine parse_macro_comparison
+
+!> Check if condition contains a comparison operator (== or !=)
+logical function has_comparison_operator(condition)
+    character(*), intent(in) :: condition
+    has_comparison_operator = index(condition, '==') > 0 .or. index(condition, '!=') > 0
+end function has_comparison_operator
+
 !> Append lines to a dynamic string array
 subroutine append_lines(array, new_lines)
     type(string_t), allocatable, intent(inout) :: array(:)
@@ -373,9 +427,8 @@ subroutine parse_cpp_condition(lower_line, line, preprocess, is_active, macro_na
     logical, intent(out) :: is_active
     type(string_t), optional, intent(in) :: defined_macros(:)
 
-    integer :: start_pos, end_pos, heading_blanks, i, eq_pos, neq_pos
-    character(:), allocatable :: condition, lhs, rhs, macro_value
-    logical :: is_equality, is_inequality, macro_found
+    integer :: start_pos, end_pos, heading_blanks, i
+    character(:), allocatable :: condition
 
     ! Always active if CPP preprocessor is not active
     if (.not. present(preprocess)) then
@@ -440,41 +493,9 @@ subroutine parse_cpp_condition(lower_line, line, preprocess, is_active, macro_na
         else
             ! Check for comparison operators: == or !=
             condition = trim(adjustl(lower_line(4:)))
-            eq_pos = index(condition, '==')
-            neq_pos = index(condition, '!=')
 
-            is_equality = eq_pos > 0 .and. (neq_pos == 0 .or. eq_pos < neq_pos)
-            is_inequality = neq_pos > 0 .and. (eq_pos == 0 .or. neq_pos < eq_pos)
-
-            if (is_equality .or. is_inequality) then
-                ! #if MACRO == VALUE or #if MACRO != VALUE
-                if (is_equality) then
-                    lhs = trim(adjustl(condition(1:eq_pos-1)))
-                    rhs = trim(adjustl(condition(eq_pos+2:)))
-                else
-                    lhs = trim(adjustl(condition(1:neq_pos-1)))
-                    rhs = trim(adjustl(condition(neq_pos+2:)))
-                end if
-
-                macro_name = lhs
-
-                ! Get macro value - first check defined_macros, then preprocess%macros
-                macro_value = get_macro_value(lhs, defined_macros, macro_found)
-                if (.not. macro_found) then
-                    macro_value = get_macro_value(lhs, preprocess%macros, macro_found)
-                end if
-
-                if (.not. macro_found) then
-                    ! Macro not defined - condition is false per CPP behavior
-                    is_active = .false.
-                else
-                    ! Compare values (case-insensitive for robustness)
-                    if (is_equality) then
-                        is_active = lower(macro_value) == lower(rhs)
-                    else
-                        is_active = lower(macro_value) /= lower(rhs)
-                    end if
-                end if
+            if (has_comparison_operator(condition)) then
+                call parse_macro_comparison(condition, preprocess%macros, defined_macros, is_active, macro_name)
             else
                 ! #if MACRO (simple macro check)
                 start_pos = 4 + heading_blanks ! Skip "#if "
@@ -506,37 +527,9 @@ subroutine parse_cpp_condition(lower_line, line, preprocess, is_active, macro_na
         else
             ! Check for comparison operators in #elif
             condition = trim(adjustl(lower_line(6:)))
-            eq_pos = index(condition, '==')
-            neq_pos = index(condition, '!=')
 
-            is_equality = eq_pos > 0 .and. (neq_pos == 0 .or. eq_pos < neq_pos)
-            is_inequality = neq_pos > 0 .and. (eq_pos == 0 .or. neq_pos < eq_pos)
-
-            if (is_equality .or. is_inequality) then
-                if (is_equality) then
-                    lhs = trim(adjustl(condition(1:eq_pos-1)))
-                    rhs = trim(adjustl(condition(eq_pos+2:)))
-                else
-                    lhs = trim(adjustl(condition(1:neq_pos-1)))
-                    rhs = trim(adjustl(condition(neq_pos+2:)))
-                end if
-
-                macro_name = lhs
-
-                macro_value = get_macro_value(lhs, defined_macros, macro_found)
-                if (.not. macro_found) then
-                    macro_value = get_macro_value(lhs, preprocess%macros, macro_found)
-                end if
-
-                if (.not. macro_found) then
-                    is_active = .false.
-                else
-                    if (is_equality) then
-                        is_active = lower(macro_value) == lower(rhs)
-                    else
-                        is_active = lower(macro_value) /= lower(rhs)
-                    end if
-                end if
+            if (has_comparison_operator(condition)) then
+                call parse_macro_comparison(condition, preprocess%macros, defined_macros, is_active, macro_name)
             else
                 ! simple form: #elif MACRO
                 start_pos = 6 + heading_blanks  ! skip "#elif "
