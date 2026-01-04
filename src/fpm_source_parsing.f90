@@ -58,6 +58,58 @@ logical function macro_in_list(macro_name, macros)
 
 end function macro_in_list
 
+!> Check if a line is a CPP #include or Fortran include statement
+!> Returns true if it's an include, and sets include_name to the file name
+subroutine is_include_line(line, is_include, include_name)
+    character(*), intent(in) :: line
+    logical, intent(out) :: is_include
+    character(:), allocatable, intent(out) :: include_name
+
+    character(:), allocatable :: line_lower
+    integer :: stat, ic
+
+    is_include = .false.
+    include_name = ""
+
+    line_lower = adjustl(lower(line))
+
+    ! Check for CPP #include directive: #include "file"
+    if (index(line_lower, '#include') == 1 .and. index(line, '"') > 0) then
+        include_name = split_n(line, n=2, delims='"', stat=stat)
+        if (stat == 0 .and. len_trim(include_name) > 0) is_include = .true.
+        return
+    end if
+
+    ! Check for Fortran include statement: include "file" or include 'file'
+    if (index(line_lower, 'include') == 1) then
+        ic = index(lower(line), 'include')
+        if (index(adjustl(line(ic+7:)), '"') == 1 .or. &
+            index(adjustl(line(ic+7:)), "'") == 1) then
+            include_name = split_n(line, n=2, delims="'"//'"', stat=stat)
+            if (stat == 0 .and. len_trim(include_name) > 0) is_include = .true.
+        end if
+    end if
+
+end subroutine is_include_line
+
+!> Find include file in standard locations
+!> Searches: source directory first, then package's include directory
+function find_include_file(name, src_dir, pkg_dir) result(path)
+    character(*), intent(in) :: name, src_dir, pkg_dir
+    character(:), allocatable :: path
+
+    ! Try source directory first
+    path = join_path(src_dir, name)
+    if (exists(path)) return
+
+    ! Try package's include directory (../include from source dir)
+    path = join_path(pkg_dir, join_path("include", name))
+    if (exists(path)) return
+
+    ! Not found
+    path = ""
+end function find_include_file
+
 !> Get the value of a macro from the macros list
 !> Returns empty string if macro is not defined
 !> Macros are stored as "NAME" (defined, no value) or "NAME=VALUE"
@@ -96,6 +148,52 @@ function get_macro_value(macro_name, macros, found) result(value)
 
 end function get_macro_value
 
+!> Append lines to a dynamic string array
+subroutine append_lines(array, new_lines)
+    type(string_t), allocatable, intent(inout) :: array(:)
+    type(string_t), intent(in) :: new_lines(:)
+
+    type(string_t), allocatable :: temp(:)
+    integer :: n, m
+
+    if (.not. allocated(array)) then
+        array = new_lines
+        return
+    end if
+
+    n = size(array)
+    m = size(new_lines)
+    if (m == 0) return
+
+    allocate(temp(n + m))
+    temp(1:n) = array
+    temp(n+1:n+m) = new_lines
+    call move_alloc(temp, array)
+
+end subroutine append_lines
+
+!> Append a single line to a dynamic string array
+subroutine append_line(array, new_line)
+    type(string_t), allocatable, intent(inout) :: array(:)
+    type(string_t), intent(in) :: new_line
+
+    type(string_t), allocatable :: temp(:)
+    integer :: n
+
+    if (.not. allocated(array)) then
+        allocate(array(1))
+        array(1) = new_line
+        return
+    end if
+
+    n = size(array)
+    allocate(temp(n + 1))
+    temp(1:n) = array
+    temp(n + 1) = new_line
+    call move_alloc(temp, array)
+
+end subroutine append_line
+
 !> Read source file lines with include files embedded inline
 !> Replaces both CPP `#include "file"` and Fortran `include "file"` with file contents
 !> Searches in: source directory, ../include (default fpm include dir)
@@ -103,17 +201,13 @@ function read_lines_with_includes(filename) result(lines)
     character(*), intent(in) :: filename
     type(string_t), allocatable :: lines(:)
 
-    type(string_t), allocatable :: file_lines(:), include_lines(:), result_lines(:)
-    character(:), allocatable :: line_lower, include_name, include_path, source_dir, pkg_dir
-    integer :: i, n_lines, stat, ic
-    logical :: is_include
+    type(string_t), allocatable :: file_lines(:), include_lines(:)
+    character(:), allocatable :: include_name, include_path, source_dir, pkg_dir
+    integer :: i
+    logical :: found_include
 
     file_lines = read_lines_expanded(filename)
-    if (.not. allocated(file_lines)) then
-        allocate(lines(0))
-        return
-    end if
-    if (size(file_lines) == 0) then
+    if (.not. allocated(file_lines) .or. size(file_lines) == 0) then
         allocate(lines(0))
         return
     end if
@@ -121,99 +215,25 @@ function read_lines_with_includes(filename) result(lines)
     source_dir = parent_dir(filename)
     pkg_dir = parent_dir(source_dir)
 
-    ! First pass: count total lines including embedded includes
-    n_lines = 0
+    ! Single pass: build result with includes embedded dynamically
     do i = 1, size(file_lines)
-        line_lower = adjustl(lower(file_lines(i)%s))
-        is_include = .false.
-        include_name = ""
+        call is_include_line(file_lines(i)%s, found_include, include_name)
 
-        ! Check for CPP #include directive: #include "file"
-        if (index(line_lower, '#include') == 1 .and. index(file_lines(i)%s, '"') > 0) then
-            include_name = split_n(file_lines(i)%s, n=2, delims='"', stat=stat)
-            if (stat == 0) is_include = .true.
-        ! Check for Fortran include statement: include "file" or include 'file'
-        elseif (index(line_lower, 'include') == 1) then
-            ic = index(lower(file_lines(i)%s), 'include')
-            if (index(adjustl(file_lines(i)%s(ic+7:)), '"') == 1 .or. &
-                index(adjustl(file_lines(i)%s(ic+7:)), "'") == 1) then
-                include_name = split_n(file_lines(i)%s, n=2, delims="'"//'"', stat=stat)
-                if (stat == 0) is_include = .true.
-            end if
-        end if
-
-        if (is_include .and. len_trim(include_name) > 0) then
+        if (found_include) then
             include_path = find_include_file(include_name, source_dir, pkg_dir)
             if (len_trim(include_path) > 0) then
                 include_lines = read_lines(include_path)
-                if (allocated(include_lines)) then
-                    n_lines = n_lines + size(include_lines)
+                if (allocated(include_lines) .and. size(include_lines) > 0) then
+                    call append_lines(lines, include_lines)
                     cycle
                 end if
             end if
         end if
 
-        n_lines = n_lines + 1
+        call append_line(lines, file_lines(i))
     end do
 
-    ! Second pass: build result with includes embedded
-    allocate(result_lines(n_lines))
-    n_lines = 0
-    do i = 1, size(file_lines)
-        line_lower = adjustl(lower(file_lines(i)%s))
-        is_include = .false.
-        include_name = ""
-
-        ! Check for CPP #include directive: #include "file"
-        if (index(line_lower, '#include') == 1 .and. index(file_lines(i)%s, '"') > 0) then
-            include_name = split_n(file_lines(i)%s, n=2, delims='"', stat=stat)
-            if (stat == 0) is_include = .true.
-        ! Check for Fortran include statement: include "file" or include 'file'
-        elseif (index(line_lower, 'include') == 1) then
-            ic = index(lower(file_lines(i)%s), 'include')
-            if (index(adjustl(file_lines(i)%s(ic+7:)), '"') == 1 .or. &
-                index(adjustl(file_lines(i)%s(ic+7:)), "'") == 1) then
-                include_name = split_n(file_lines(i)%s, n=2, delims="'"//'"', stat=stat)
-                if (stat == 0) is_include = .true.
-            end if
-        end if
-
-        if (is_include .and. len_trim(include_name) > 0) then
-            include_path = find_include_file(include_name, source_dir, pkg_dir)
-            if (len_trim(include_path) > 0) then
-                include_lines = read_lines(include_path)
-                if (allocated(include_lines)) then
-                    result_lines(n_lines+1:n_lines+size(include_lines)) = include_lines
-                    n_lines = n_lines + size(include_lines)
-                    cycle
-                end if
-            end if
-        end if
-
-        n_lines = n_lines + 1
-        result_lines(n_lines) = file_lines(i)
-    end do
-
-    lines = result_lines
-
-contains
-
-    !> Find include file in standard locations
-    function find_include_file(name, src_dir, pkg_dir) result(path)
-        character(*), intent(in) :: name, src_dir, pkg_dir
-        character(:), allocatable :: path
-
-        ! Try source directory first
-        path = join_path(src_dir, name)
-        if (exists(path)) return
-
-        ! Try package's include directory (../include from source dir)
-        path = join_path(pkg_dir, join_path("include", name))
-        if (exists(path)) return
-
-        ! Not found
-        path = ""
-    end function find_include_file
+    if (.not. allocated(lines)) allocate(lines(0))
 
 end function read_lines_with_includes
 
