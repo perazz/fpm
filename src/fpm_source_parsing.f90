@@ -24,7 +24,7 @@ use fpm_model, only: srcfile_t, &
                     FPM_UNIT_CSOURCE, FPM_UNIT_CHEADER, FPM_SCOPE_UNKNOWN, &
                     FPM_SCOPE_DEP, FPM_SCOPE_APP, FPM_SCOPE_TEST, FPM_UNIT_CPPSOURCE
 use fpm_manifest_preprocess, only: preprocess_config_t
-use fpm_filesystem, only: read_lines, read_lines_expanded, exists, dirname, join_path, parent_dir
+use fpm_filesystem, only: read_lines, read_lines_expanded, exists, join_path, parent_dir
 implicit none
 
 private
