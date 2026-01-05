@@ -613,6 +613,7 @@ function parse_f_source(f_filename,error,preprocess) result(f_source)
         inside_module = .false.
         inside_interface = .false.
         cpp_blk = cpp_block()  ! Initialize with default values
+        if (allocated(defined_macros)) deallocate(defined_macros)  ! Reset macros each pass
         file_loop: do i=1,size(file_lines_lower)
 
             ! Skip comment lines and empty lines
