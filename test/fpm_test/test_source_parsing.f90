@@ -1791,6 +1791,11 @@ contains
             return
         end if
 
+        if (.not.('external_neq_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'Expected external_neq_module (UNDEFINED != 1 should be true)')
+            return
+        end if
+
         if ('undefined_module' .in. f_source%modules_used) then
             call test_failed(error, 'Should not find undefined_module when UNDEFINED_MACRO is undefined')
             return

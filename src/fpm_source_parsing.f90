@@ -185,16 +185,14 @@ subroutine parse_macro_comparison(condition, preprocess_macros, defined_macros, 
         macro_value = get_macro_value(lhs, preprocess_macros, macro_found)
     end if
 
-    if (.not. macro_found) then
-        ! Macro not defined - condition is false per CPP behavior
-        is_active = .false.
+    ! Undefined macros evaluate to 0 per CPP behavior
+    if (.not. macro_found) macro_value = "0"
+
+    ! Compare values (case-insensitive)
+    if (is_equality) then
+        is_active = lower(macro_value) == lower(rhs)
     else
-        ! Compare values (case-insensitive)
-        if (is_equality) then
-            is_active = lower(macro_value) == lower(rhs)
-        else
-            is_active = lower(macro_value) /= lower(rhs)
-        end if
+        is_active = lower(macro_value) /= lower(rhs)
     end if
 
 end subroutine parse_macro_comparison
