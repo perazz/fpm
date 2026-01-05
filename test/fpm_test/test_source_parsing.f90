@@ -54,7 +54,8 @@ contains
             & new_unittest("conditional-compilation-elif", test_conditional_compilation_elif), &
             & new_unittest("conditional-compilation-elif-else", test_conditional_compilation_elif_else), &
             & new_unittest("conditional-compilation_ifdef_else", test_conditional_compilation_ifdef_else), &
-            & new_unittest("conditional-if-defined", test_conditional_if_defined) &
+            & new_unittest("conditional-if-defined", test_conditional_if_defined), &
+            & new_unittest("conditional-macro-comparison", test_conditional_macro_comparison) &
             ]
 
     end subroutine collect_source_parsing
@@ -1726,6 +1727,115 @@ contains
         end if
 
     end subroutine test_conditional_if_defined
+
+    !> Test conditional compilation with #if MACRO == VALUE and #if MACRO != VALUE
+    subroutine test_conditional_macro_comparison(error)
+
+        !> Error handling
+        type(error_t), allocatable, intent(out) :: error
+
+        type(srcfile_t) :: f_source
+        character(:), allocatable :: temp_file
+        integer :: unit
+        type(preprocess_config_t) :: cpp_config
+
+        temp_file = get_temp_filename()
+
+        ! Test file with macro value comparisons and #define
+        open(file=temp_file, newunit=unit)
+        write(unit, '(a)') &
+            'module test_mod', &
+            '#define LOCAL_MACRO 1', &
+            '#if EXTERNAL_MACRO == 1', &
+            '  use external_eq_module', &
+            '#endif', &
+            '#if EXTERNAL_MACRO != 1', &
+            '  use external_neq_module', &
+            '#endif', &
+            '#if LOCAL_MACRO == 1', &
+            '  use local_eq_module', &
+            '#endif', &
+            '#if LOCAL_MACRO != 1', &
+            '  use local_neq_module', &
+            '#endif', &
+            '#if UNDEFINED_MACRO == 1', &
+            '  use undefined_module', &
+            '#endif', &
+            '  implicit none', &
+            'end module test_mod'
+        close(unit)
+
+        ! Test 1: With CPP enabled but no external macros defined
+        ! LOCAL_MACRO is defined via #define, EXTERNAL_MACRO is not
+        call cpp_config%new([string_t::])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        ! Should find: local_eq_module (LOCAL_MACRO==1 is true)
+        !              external_neq_module (EXTERNAL_MACRO!=1 is true since undefined)
+        ! Should NOT find: external_eq_module, local_neq_module, undefined_module
+        if (.not.('local_eq_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'Expected local_eq_module with #define LOCAL_MACRO 1')
+            return
+        end if
+
+        if ('local_neq_module' .in. f_source%modules_used) then
+            call test_failed(error, 'Should not find local_neq_module when LOCAL_MACRO==1')
+            return
+        end if
+
+        if ('external_eq_module' .in. f_source%modules_used) then
+            call test_failed(error, 'Should not find external_eq_module when EXTERNAL_MACRO is undefined')
+            return
+        end if
+
+        if (.not.('external_neq_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'Expected external_neq_module (UNDEFINED != 1 should be true)')
+            return
+        end if
+
+        if ('undefined_module' .in. f_source%modules_used) then
+            call test_failed(error, 'Should not find undefined_module when UNDEFINED_MACRO is undefined')
+            return
+        end if
+
+        ! Test 2: With external macro defined to matching value
+        call cpp_config%new([string_t('EXTERNAL_MACRO=1')])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        if (.not.('external_eq_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'Expected external_eq_module with EXTERNAL_MACRO=1')
+            return
+        end if
+
+        if ('external_neq_module' .in. f_source%modules_used) then
+            call test_failed(error, 'Should not find external_neq_module when EXTERNAL_MACRO==1')
+            return
+        end if
+
+        ! Test 3: With external macro defined to non-matching value
+        call cpp_config%new([string_t('EXTERNAL_MACRO=2')])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        if ('external_eq_module' .in. f_source%modules_used) then
+            call test_failed(error, 'Should not find external_eq_module when EXTERNAL_MACRO==2')
+            return
+        end if
+
+        if (.not.('external_neq_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'Expected external_neq_module with EXTERNAL_MACRO=2 (!=1)')
+            return
+        end if
+
+    end subroutine test_conditional_macro_comparison
 
 
 end module test_source_parsing
