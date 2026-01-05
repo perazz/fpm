@@ -82,9 +82,12 @@ subroutine is_include_line(line, is_include, include_name)
 
     ! Check for Fortran include statement: include "file" or include 'file'
     if (index(line_lower, 'include') == 1) then
-        ic = index(lower(line), 'include')
-        if (index(adjustl(line(ic+7:)), '"') == 1 .or. &
-            index(adjustl(line(ic+7:)), "'") == 1) then
+        ic = verify(line, ' ')  ! Position of first non-space (where 'include' starts)
+        if (ic == 0) return
+        stat = verify(line(ic+7:), ' ')  ! Find first non-space after 'include'
+        if (stat == 0) return  ! Nothing after 'include'
+        ic = ic + 6 + stat  ! Position of first non-space after 'include'
+        if (line(ic:ic) == '"' .or. line(ic:ic) == "'") then
             include_name = split_n(line, n=2, delims="'"//'"', stat=stat)
             if (stat == 0 .and. len_trim(include_name) > 0) is_include = .true.
         end if
@@ -748,11 +751,13 @@ function parse_f_source(f_filename,error,preprocess) result(f_source)
             endif
 
             ! Process 'INCLUDE' statements
-            ic = index(file_lines_lower(i)%s,'include')
-            if ( ic == 1 ) then
-                ic = index(lower(file_lines(i)%s),'include')
-                if (index(adjustl(file_lines(i)%s(ic+7:)),'"') == 1 .or. &
-                    index(adjustl(file_lines(i)%s(ic+7:)),"'") == 1 ) then
+            if (index(file_lines_lower(i)%s,'include') == 1) then
+                ic = verify(file_lines(i)%s, ' ')  ! Position of first non-space (where 'include' starts)
+                if (ic == 0) cycle
+                j = verify(file_lines(i)%s(ic+7:), ' ')  ! Find first non-space after 'include'
+                if (j == 0) cycle  ! Nothing after 'include'
+                ic = ic + 6 + j  ! Position of first non-space after 'include'
+                if (file_lines(i)%s(ic:ic) == '"' .or. file_lines(i)%s(ic:ic) == "'") then
 
                     n_include = n_include + 1
 
