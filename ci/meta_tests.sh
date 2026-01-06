@@ -62,5 +62,11 @@ pushd metapackage_stdlib_extblas
 "$fpm" run --verbose
 popd
 
+# Test metapackage propagation from dependencies (issue #1209)
+pushd metapackage_dep_parent
+"$fpm" build --verbose
+"$fpm" run --verbose
+popd
+
 # Cleanup
 rm -rf ./*/build
