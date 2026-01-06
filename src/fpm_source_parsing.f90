@@ -260,6 +260,10 @@ pure subroutine insert_lines(array, chunk, at_line)
 
     n = size(array)
     m = size(chunk)
+
+    ! Bounds check: at_line must be in valid range [1, n]
+    if (at_line < 1 .or. at_line > n) return
+
     new_size = n - 1 + m  ! Remove 1 line, add m lines
 
     allocate(new_array(new_size))
