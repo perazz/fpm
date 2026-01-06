@@ -101,17 +101,13 @@ subroutine build_model(model, settings, package_config, error)
     end if
 
     ! Initialize compiler flags using the feature-enabled package configuration
-    call new_compiler_flags(model, settings, package)  
-    
-    ! Resolve meta-dependencies into the package and the model
-    call resolve_metapackages(model,package,settings,error)
-    if (allocated(error)) return
-    
-    if (allocated(package%build)) then 
+    call new_compiler_flags(model, settings, package)
+
+    if (allocated(package%build)) then
         model%enforce_module_names = package%build%module_naming
         model%module_prefix        = package%build%module_prefix
-    endif      
-    
+    endif
+
     ! Create dependencies
     call new_dependency_tree(model%deps, cache=join_path(settings%build_dir, "cache.toml"), &
     & path_to_config=settings%path_to_config, build_dir=settings%build_dir)
@@ -122,6 +118,11 @@ subroutine build_model(model, settings, package_config, error)
 
     ! Update dependencies where needed
     call model%deps%update(error)
+    if (allocated(error)) return
+
+    ! Resolve meta-dependencies into the package and the model
+    ! (must be after dependency tree is built to include metapackages from dependencies)
+    call resolve_metapackages(model,package,settings,error)
     if (allocated(error)) return
 
     ! build directory should now exist
