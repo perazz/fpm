@@ -55,7 +55,8 @@ contains
             & new_unittest("conditional-compilation-elif-else", test_conditional_compilation_elif_else), &
             & new_unittest("conditional-compilation_ifdef_else", test_conditional_compilation_ifdef_else), &
             & new_unittest("conditional-if-defined", test_conditional_if_defined), &
-            & new_unittest("conditional-macro-comparison", test_conditional_macro_comparison) &
+            & new_unittest("conditional-macro-comparison", test_conditional_macro_comparison), &
+            & new_unittest("define-without-trailing-space", test_define_no_trailing_space) &
             ]
 
     end subroutine collect_source_parsing
@@ -1836,6 +1837,51 @@ contains
         end if
 
     end subroutine test_conditional_macro_comparison
+
+    !> Test #define directive without trailing space (issue #1222)
+    !> This tests for out-of-bounds access when parsing #define at end of line
+    subroutine test_define_no_trailing_space(error)
+
+        !> Error handling
+        type(error_t), allocatable, intent(out) :: error
+
+        integer :: unit
+        character(:), allocatable :: temp_file
+        type(srcfile_t), allocatable :: f_source
+        type(preprocess_config_t) :: cpp_config
+
+        allocate(temp_file, source=get_temp_filename())
+
+        open(file=temp_file, newunit=unit)
+        ! Note: #define SIMPLE_FLAG has no trailing space - this triggered
+        ! an out-of-bounds error before the fix
+        write(unit, '(a)') &
+            & '#define SIMPLE_FLAG', &
+            & '#ifdef SIMPLE_FLAG', &
+            & '  use flag_module', &
+            & '#endif', &
+            & 'program test', &
+            & '  implicit none', &
+            & 'end program test'
+        close(unit)
+
+        call cpp_config%new([string_t::])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        if (f_source%unit_type /= FPM_UNIT_PROGRAM) then
+            call test_failed(error, 'Wrong unit type detected - expecting FPM_UNIT_PROGRAM')
+            return
+        end if
+
+        if (.not.('flag_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'Expected flag_module with #define SIMPLE_FLAG (no trailing space)')
+            return
+        end if
+
+    end subroutine test_define_no_trailing_space
 
 
 end module test_source_parsing
