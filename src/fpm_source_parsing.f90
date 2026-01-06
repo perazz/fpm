@@ -248,14 +248,14 @@ subroutine parse_if_condition(lower_line, line, offset, heading_blanks, preproce
 
 end subroutine parse_if_condition
 
-!> Replace a single line with a chunk of lines (pure function)
-!> Returns new array with array(at_line) replaced by chunk(:)
-pure function insert_lines(array, chunk, at_line) result(new_array)
-    type(string_t), intent(in) :: array(:)
+!> Replace a single line with a chunk of lines (in-place)
+!> Replaces array(at_line) with chunk(:)
+pure subroutine insert_lines(array, chunk, at_line)
+    type(string_t), allocatable, intent(inout) :: array(:)
     type(string_t), intent(in) :: chunk(:)
     integer, intent(in) :: at_line
-    type(string_t), allocatable :: new_array(:)
 
+    type(string_t), allocatable :: new_array(:)
     integer :: n, m, new_size
 
     n = size(array)
@@ -273,7 +273,9 @@ pure function insert_lines(array, chunk, at_line) result(new_array)
     ! Copy lines after at_line
     if (at_line < n) new_array(at_line+m:new_size) = array(at_line+1:n)
 
-end function insert_lines
+    call move_alloc(new_array, array)
+
+end subroutine insert_lines
 
 !> Read source file lines with include files embedded inline
 !> Replaces both CPP `#include "file"` and Fortran `include "file"` with file contents
@@ -305,7 +307,7 @@ function read_lines_with_includes(filename) result(lines)
             if (len_trim(include_path) > 0) then
                 include_lines = read_lines(include_path)
                 if (allocated(include_lines) .and. size(include_lines) > 0) then
-                    lines = insert_lines(lines, include_lines, i)
+                    call insert_lines(lines, include_lines, i)
                 end if
             end if
         end if
