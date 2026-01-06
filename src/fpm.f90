@@ -103,6 +103,12 @@ subroutine build_model(model, settings, package_config, error)
     ! Initialize compiler flags using the feature-enabled package configuration
     call new_compiler_flags(model, settings, package)
 
+    ! Resolve meta-dependencies into the package and the model
+    ! This must happen BEFORE the dependency tree is built, because metapackages
+    ! add dependencies (e.g., stdlib adds stdlib and test-drive as dev-dependencies)
+    call resolve_metapackages(model,package,settings,error)
+    if (allocated(error)) return
+
     if (allocated(package%build)) then
         model%enforce_module_names = package%build%module_naming
         model%module_prefix        = package%build%module_prefix
@@ -120,8 +126,8 @@ subroutine build_model(model, settings, package_config, error)
     call model%deps%update(error)
     if (allocated(error)) return
 
-    ! Resolve meta-dependencies into the package and the model
-    ! (must be after dependency tree is built to include metapackages from dependencies)
+    ! Resolve metapackages from dependencies (if any)
+    ! This second call merges metapackage requests from all resolved dependencies
     call resolve_metapackages(model,package,settings,error)
     if (allocated(error)) return
 

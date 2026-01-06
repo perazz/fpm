@@ -131,17 +131,19 @@ module fpm_meta
         ! Start with the main package's metapackage requests
         all_meta = package%meta
 
-        ! Merge metapackage requests from all dependencies
+        ! Merge metapackage requests from all dependencies (if dependency tree exists)
         ! Skip index 1 (the main package itself)
-        do i = 2, model%deps%ndep
-            if (.not. allocated(model%deps%dep(i)%proj_dir)) cycle
+        if (allocated(model%deps%dep)) then
+            do i = 2, model%deps%ndep
+                if (.not. allocated(model%deps%dep(i)%proj_dir)) cycle
 
-            manifest_path = join_path(model%deps%dep(i)%proj_dir, "fpm.toml")
-            call get_package_data(dep_pkg, manifest_path, error)
-            if (allocated(error)) return
+                manifest_path = join_path(model%deps%dep(i)%proj_dir, "fpm.toml")
+                call get_package_data(dep_pkg, manifest_path, error)
+                if (allocated(error)) return
 
-            call all_meta%merge(dep_pkg%meta)
-        end do
+                call all_meta%merge(dep_pkg%meta)
+            end do
+        end if
 
         ! Get all requested metapackages (including those from dependencies)
         requested = all_meta%get_requests()
