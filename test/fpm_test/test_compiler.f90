@@ -26,7 +26,8 @@ contains
             & new_unittest("check-cxx-source-runs", test_check_cxx_source_runs), &
             & new_unittest("tokenize-flags", test_tokenize_flags), &
             & new_unittest("compile-commands-unix", test_register_compile_command_unix), &
-            & new_unittest("compile-commands-windows", test_register_compile_command_windows)]
+            & new_unittest("compile-commands-windows", test_register_compile_command_windows), &
+            & new_unittest("get-default-flags-pic", test_get_default_flags_pic)]
 
     end subroutine collect_compiler
 
@@ -309,6 +310,53 @@ contains
         end associate
     end subroutine test_register_compile_command_windows
 
+    subroutine test_get_default_flags_pic(error)
+        !> Error handling
+        type(error_t), allocatable, intent(out) :: error
+
+        type(compiler_t) :: compiler
+        character(:), allocatable :: flags
+        integer :: first_pos, second_pos
+
+        !> Create a gfortran compiler
+        call new_compiler(compiler, "gfortran", "gcc", "g++", echo=.false., verbose=.false.)
+
+        if (compiler%is_unknown()) then
+            call test_failed(error, "Cannot initialize gfortran compiler for PIC test")
+            return
+        end if
+
+        !> Test that -fPIC is included in release flags
+        flags = compiler%get_default_flags(release=.true.)
+        first_pos = index(flags, "-fPIC")
+        if (first_pos == 0) then
+            call test_failed(error, "Release flags should contain -fPIC, got: "//flags)
+            return
+        end if
+
+        !> Test that -fPIC is not duplicated in release flags
+        second_pos = index(flags(first_pos+5:), "-fPIC")
+        if (second_pos /= 0) then
+            call test_failed(error, "Release flags should not contain duplicate -fPIC, got: "//flags)
+            return
+        end if
+
+        !> Test that -fPIC is included in debug flags
+        flags = compiler%get_default_flags(release=.false.)
+        first_pos = index(flags, "-fPIC")
+        if (first_pos == 0) then
+            call test_failed(error, "Debug flags should contain -fPIC, got: "//flags)
+            return
+        end if
+
+        !> Test that -fPIC is not duplicated in debug flags
+        second_pos = index(flags(first_pos+5:), "-fPIC")
+        if (second_pos /= 0) then
+            call test_failed(error, "Debug flags should not contain duplicate -fPIC, got: "//flags)
+            return
+        end if
+
+    end subroutine test_get_default_flags_pic
 
 
 end module test_compiler
