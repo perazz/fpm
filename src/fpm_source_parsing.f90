@@ -300,11 +300,8 @@ logical function macro_is_truthy(macro_name, macros)
     value = get_macro_value(macro_name, macros, found)
     if (.not. found) return  ! Undefined macro = false
 
-    ! Empty value (macro defined without value) treated as truthy
-    if (len_trim(value) == 0) then
-        macro_is_truthy = .true.
-        return
-    end if
+    ! Empty value (macro defined without value) = false per CPP (equivalent to 0)
+    if (len_trim(value) == 0) return
 
     ! Try to parse as integer
     read(value, *, iostat=ios) int_value

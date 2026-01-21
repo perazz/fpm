@@ -2056,15 +2056,15 @@ contains
             return
         end if
 
-        ! Test 4: Empty macro (defined without value) - treated as truthy
+        ! Test 4: Empty macro (defined without value) - false per CPP (equivalent to 0)
         call cpp_config%new([string_t('EMPTY_MACRO')])
         cpp_config%name = "cpp"
 
         f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
         if (allocated(error)) return
 
-        if (.not.('empty_module' .in. f_source%modules_used)) then
-            call test_failed(error, 'Empty macro should evaluate to true in #if')
+        if ('empty_module' .in. f_source%modules_used) then
+            call test_failed(error, 'Empty macro should evaluate to false in #if (per CPP)')
             return
         end if
 
@@ -2184,8 +2184,8 @@ contains
             call test_failed(error, '#if MACRO: MACRO=42 should be true')
             return
         end if
-        if (.not.('if_empty_module' .in. f_source%modules_used)) then
-            call test_failed(error, '#if MACRO: empty macro should be true')
+        if ('if_empty_module' .in. f_source%modules_used) then
+            call test_failed(error, '#if MACRO: empty macro should be false (per CPP)')
             return
         end if
         if ('if_undefined_module' .in. f_source%modules_used) then
