@@ -147,14 +147,14 @@ function get_macro_value(macro_name, macros, found) result(value)
         if (eq_pos > 0) then
             ! Macro with value: "NAME=VALUE"
             name_part = macros(i)%s(1:eq_pos-1)
-            if (lower(name_part) == lower(macro_name)) then
+            if (name_part == macro_name) then
                 value = macros(i)%s(eq_pos+1:)
                 if (present(found)) found = .true.
                 return
             end if
         else
             ! Macro without value: "NAME" (treated as defined but empty value)
-            if (lower(macros(i)%s) == lower(macro_name)) then
+            if (macros(i)%s == macro_name) then
                 value = ""
                 if (present(found)) found = .true.
                 return
@@ -201,11 +201,11 @@ subroutine parse_macro_comparison(condition, preprocess_macros, defined_macros, 
     ! Undefined macros evaluate to 0 per CPP behavior
     if (.not. macro_found) macro_value = "0"
 
-    ! Compare values (case-insensitive)
+    ! Compare values (case-sensitive, per CPP)
     if (is_equality) then
-        is_active = lower(macro_value) == lower(rhs)
+        is_active = macro_value == rhs
     else
-        is_active = lower(macro_value) /= lower(rhs)
+        is_active = macro_value /= rhs
     end if
 
 end subroutine parse_macro_comparison
@@ -271,7 +271,7 @@ subroutine parse_if_condition(lower_line, line, offset, heading_blanks, preproce
         condition = trim(adjustl(lower_line(offset:)))
 
         if (has_comparison_operator(condition)) then
-            call parse_macro_comparison(condition, preprocess_macros, defined_macros, is_active, macro_name)
+            call parse_macro_comparison(line(offset+heading_blanks:), preprocess_macros, defined_macros, is_active, macro_name)
         else
             ! Simple macro check: #if MACRO
             ! Per CPP semantics: true if macro is defined with non-zero value
