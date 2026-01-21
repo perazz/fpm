@@ -58,7 +58,8 @@ contains
             & new_unittest("conditional-macro-comparison", test_conditional_macro_comparison), &
             & new_unittest("define-without-trailing-space", test_define_no_trailing_space), &
             & new_unittest("macro-case-sensitivity", test_macro_case_sensitivity), &
-            & new_unittest("if-macro-truthy", test_if_macro_truthy) &
+            & new_unittest("if-macro-truthy", test_if_macro_truthy), &
+            & new_unittest("if-macro-truthy-from-define", test_if_macro_truthy_from_define) &
             ]
 
     end subroutine collect_source_parsing
@@ -2068,6 +2069,195 @@ contains
         end if
 
     end subroutine test_if_macro_truthy
+
+    !> Test all CPP conditional formats for macros defined inside source via #define
+    !> Formats: #if MACRO, #ifdef MACRO, #if defined(MACRO), #if defined MACRO, #if MACRO == val
+    subroutine test_if_macro_truthy_from_define(error)
+
+        !> Error handling
+        type(error_t), allocatable, intent(out) :: error
+
+        integer :: unit
+        character(:), allocatable :: temp_file
+        type(srcfile_t), allocatable :: f_source
+        type(preprocess_config_t) :: cpp_config
+
+        allocate(temp_file, source=get_temp_filename())
+
+        ! Test file with #define inside source, then various conditional formats
+        open(file=temp_file, newunit=unit)
+        write(unit, '(a)') &
+            & '#define ZERO_MACRO 0', &
+            & '#define ONE_MACRO 1', &
+            & '#define NONZERO_MACRO 42', &
+            & '#define EMPTY_MACRO', &
+            & '', &
+            & '! Test #if MACRO format', &
+            & '#if ZERO_MACRO', &
+            & '  use if_zero_module', &
+            & '#endif', &
+            & '#if ONE_MACRO', &
+            & '  use if_one_module', &
+            & '#endif', &
+            & '#if NONZERO_MACRO', &
+            & '  use if_nonzero_module', &
+            & '#endif', &
+            & '#if EMPTY_MACRO', &
+            & '  use if_empty_module', &
+            & '#endif', &
+            & '#if UNDEFINED_MACRO', &
+            & '  use if_undefined_module', &
+            & '#endif', &
+            & '', &
+            & '! Test #ifdef MACRO format', &
+            & '#ifdef ZERO_MACRO', &
+            & '  use ifdef_zero_module', &
+            & '#endif', &
+            & '#ifdef ONE_MACRO', &
+            & '  use ifdef_one_module', &
+            & '#endif', &
+            & '#ifdef EMPTY_MACRO', &
+            & '  use ifdef_empty_module', &
+            & '#endif', &
+            & '#ifdef UNDEFINED_MACRO', &
+            & '  use ifdef_undefined_module', &
+            & '#endif', &
+            & '', &
+            & '! Test #if defined(MACRO) format (with parentheses)', &
+            & '#if defined(ZERO_MACRO)', &
+            & '  use defined_paren_zero_module', &
+            & '#endif', &
+            & '#if defined(UNDEFINED_MACRO)', &
+            & '  use defined_paren_undefined_module', &
+            & '#endif', &
+            & '#if !defined(UNDEFINED_MACRO)', &
+            & '  use not_defined_paren_module', &
+            & '#endif', &
+            & '', &
+            & '! Test #if defined MACRO format (without parentheses)', &
+            & '#if defined ONE_MACRO', &
+            & '  use defined_noparen_one_module', &
+            & '#endif', &
+            & '#if !defined UNDEFINED_MACRO', &
+            & '  use not_defined_noparen_module', &
+            & '#endif', &
+            & '', &
+            & '! Test #if MACRO == value format', &
+            & '#if ZERO_MACRO == 0', &
+            & '  use eq_zero_module', &
+            & '#endif', &
+            & '#if ONE_MACRO == 1', &
+            & '  use eq_one_module', &
+            & '#endif', &
+            & '#if NONZERO_MACRO == 42', &
+            & '  use eq_nonzero_module', &
+            & '#endif', &
+            & '#if ONE_MACRO != 0', &
+            & '  use neq_one_module', &
+            & '#endif', &
+            & '#if ZERO_MACRO != 1', &
+            & '  use neq_zero_module', &
+            & '#endif', &
+            & '', &
+            & 'program test', &
+            & '  implicit none', &
+            & 'end program test'
+        close(unit)
+
+        ! Enable CPP but don't pass any external macros
+        call cpp_config%new([string_t::])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        ! === #if MACRO tests ===
+        if ('if_zero_module' .in. f_source%modules_used) then
+            call test_failed(error, '#if MACRO: MACRO=0 should be false')
+            return
+        end if
+        if (.not.('if_one_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if MACRO: MACRO=1 should be true')
+            return
+        end if
+        if (.not.('if_nonzero_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if MACRO: MACRO=42 should be true')
+            return
+        end if
+        if (.not.('if_empty_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if MACRO: empty macro should be true')
+            return
+        end if
+        if ('if_undefined_module' .in. f_source%modules_used) then
+            call test_failed(error, '#if MACRO: undefined should be false')
+            return
+        end if
+
+        ! === #ifdef MACRO tests ===
+        if (.not.('ifdef_zero_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#ifdef MACRO: MACRO=0 should be true (defined)')
+            return
+        end if
+        if (.not.('ifdef_one_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#ifdef MACRO: MACRO=1 should be true')
+            return
+        end if
+        if (.not.('ifdef_empty_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#ifdef MACRO: empty macro should be true')
+            return
+        end if
+        if ('ifdef_undefined_module' .in. f_source%modules_used) then
+            call test_failed(error, '#ifdef MACRO: undefined should be false')
+            return
+        end if
+
+        ! === #if defined(MACRO) tests ===
+        if (.not.('defined_paren_zero_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if defined(MACRO): MACRO=0 should be true (defined)')
+            return
+        end if
+        if ('defined_paren_undefined_module' .in. f_source%modules_used) then
+            call test_failed(error, '#if defined(MACRO): undefined should be false')
+            return
+        end if
+        if (.not.('not_defined_paren_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if !defined(MACRO): undefined should be true')
+            return
+        end if
+
+        ! === #if defined MACRO tests (no parentheses) ===
+        if (.not.('defined_noparen_one_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if defined MACRO: MACRO=1 should be true')
+            return
+        end if
+        if (.not.('not_defined_noparen_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if !defined MACRO: undefined should be true')
+            return
+        end if
+
+        ! === #if MACRO == value tests ===
+        if (.not.('eq_zero_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if MACRO == 0: should be true when MACRO=0')
+            return
+        end if
+        if (.not.('eq_one_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if MACRO == 1: should be true when MACRO=1')
+            return
+        end if
+        if (.not.('eq_nonzero_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if MACRO == 42: should be true when MACRO=42')
+            return
+        end if
+        if (.not.('neq_one_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if MACRO != 0: should be true when MACRO=1')
+            return
+        end if
+        if (.not.('neq_zero_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if MACRO != 1: should be true when MACRO=0')
+            return
+        end if
+
+    end subroutine test_if_macro_truthy_from_define
 
 
 end module test_source_parsing
