@@ -56,7 +56,8 @@ contains
             & new_unittest("conditional-compilation_ifdef_else", test_conditional_compilation_ifdef_else), &
             & new_unittest("conditional-if-defined", test_conditional_if_defined), &
             & new_unittest("conditional-macro-comparison", test_conditional_macro_comparison), &
-            & new_unittest("define-without-trailing-space", test_define_no_trailing_space) &
+            & new_unittest("define-without-trailing-space", test_define_no_trailing_space), &
+            & new_unittest("macro-case-sensitivity", test_macro_case_sensitivity) &
             ]
 
     end subroutine collect_source_parsing
@@ -1882,6 +1883,98 @@ contains
         end if
 
     end subroutine test_define_no_trailing_space
+
+    !> Test that CPP macros are case-sensitive (per CPP standard)
+    subroutine test_macro_case_sensitivity(error)
+
+        !> Error handling
+        type(error_t), allocatable, intent(out) :: error
+
+        integer :: unit
+        character(:), allocatable :: temp_file
+        type(srcfile_t), allocatable :: f_source
+        type(preprocess_config_t) :: cpp_config
+
+        allocate(temp_file, source=get_temp_filename())
+
+        open(file=temp_file, newunit=unit)
+        write(unit, '(a)') &
+            & '#ifdef MY_MACRO', &
+            & '  use uppercase_module', &
+            & '#endif', &
+            & '#ifdef my_macro', &
+            & '  use lowercase_module', &
+            & '#endif', &
+            & '#ifdef My_Macro', &
+            & '  use mixedcase_module', &
+            & '#endif', &
+            & 'program test', &
+            & '  implicit none', &
+            & 'end program test'
+        close(unit)
+
+        ! Test 1: Define MY_MACRO (uppercase) - should only match uppercase
+        call cpp_config%new([string_t('MY_MACRO')])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        if (.not.('uppercase_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'Expected uppercase_module with MY_MACRO defined')
+            return
+        end if
+
+        if ('lowercase_module' .in. f_source%modules_used) then
+            call test_failed(error, 'Should not find lowercase_module - macros are case-sensitive')
+            return
+        end if
+
+        if ('mixedcase_module' .in. f_source%modules_used) then
+            call test_failed(error, 'Should not find mixedcase_module - macros are case-sensitive')
+            return
+        end if
+
+        ! Test 2: Define my_macro (lowercase) - should only match lowercase
+        call cpp_config%new([string_t('my_macro')])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        if ('uppercase_module' .in. f_source%modules_used) then
+            call test_failed(error, 'Should not find uppercase_module - macros are case-sensitive')
+            return
+        end if
+
+        if (.not.('lowercase_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'Expected lowercase_module with my_macro defined')
+            return
+        end if
+
+        if ('mixedcase_module' .in. f_source%modules_used) then
+            call test_failed(error, 'Should not find mixedcase_module - macros are case-sensitive')
+            return
+        end if
+
+        ! Test 3: Define macro with value - case sensitivity should still apply
+        call cpp_config%new([string_t('MY_MACRO=1')])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        if (.not.('uppercase_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'Expected uppercase_module with MY_MACRO=1 defined')
+            return
+        end if
+
+        if ('lowercase_module' .in. f_source%modules_used) then
+            call test_failed(error, 'Should not find lowercase_module with MY_MACRO=1 - case-sensitive')
+            return
+        end if
+
+    end subroutine test_macro_case_sensitivity
 
 
 end module test_source_parsing
