@@ -57,7 +57,8 @@ contains
             & new_unittest("conditional-if-defined", test_conditional_if_defined), &
             & new_unittest("conditional-macro-comparison", test_conditional_macro_comparison), &
             & new_unittest("define-without-trailing-space", test_define_no_trailing_space), &
-            & new_unittest("macro-case-sensitivity", test_macro_case_sensitivity) &
+            & new_unittest("macro-case-sensitivity", test_macro_case_sensitivity), &
+            & new_unittest("if-macro-truthy", test_if_macro_truthy) &
             ]
 
     end subroutine collect_source_parsing
@@ -1975,6 +1976,98 @@ contains
         end if
 
     end subroutine test_macro_case_sensitivity
+
+    !> Test #if MACRO truthy evaluation per CPP semantics
+    !> Per CPP: undefined=0, MACRO=0 is false, MACRO=1 is true, MACRO=non-zero is true
+    subroutine test_if_macro_truthy(error)
+
+        !> Error handling
+        type(error_t), allocatable, intent(out) :: error
+
+        integer :: unit
+        character(:), allocatable :: temp_file
+        type(srcfile_t), allocatable :: f_source
+        type(preprocess_config_t) :: cpp_config
+
+        allocate(temp_file, source=get_temp_filename())
+
+        ! Test file with #if MACRO (not #ifdef, not #if defined())
+        open(file=temp_file, newunit=unit)
+        write(unit, '(a)') &
+            & '#if UNDEFINED_MACRO', &
+            & '  use undefined_module', &
+            & '#endif', &
+            & '#if ZERO_MACRO', &
+            & '  use zero_module', &
+            & '#endif', &
+            & '#if ONE_MACRO', &
+            & '  use one_module', &
+            & '#endif', &
+            & '#if NONZERO_MACRO', &
+            & '  use nonzero_module', &
+            & '#endif', &
+            & '#if EMPTY_MACRO', &
+            & '  use empty_module', &
+            & '#endif', &
+            & 'program test', &
+            & '  implicit none', &
+            & 'end program test'
+        close(unit)
+
+        ! Test 1: No macros defined - only UNDEFINED should be tested (evaluates to 0/false)
+        call cpp_config%new([string_t::])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        if ('undefined_module' .in. f_source%modules_used) then
+            call test_failed(error, 'Undefined macro should evaluate to false in #if')
+            return
+        end if
+
+        ! Test 2: ZERO_MACRO=0 should be false, ONE_MACRO=1 should be true
+        call cpp_config%new([string_t('ZERO_MACRO=0'), string_t('ONE_MACRO=1')])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        if ('zero_module' .in. f_source%modules_used) then
+            call test_failed(error, 'MACRO=0 should evaluate to false in #if')
+            return
+        end if
+
+        if (.not.('one_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'MACRO=1 should evaluate to true in #if')
+            return
+        end if
+
+        ! Test 3: Non-zero values should be truthy
+        call cpp_config%new([string_t('NONZERO_MACRO=42')])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        if (.not.('nonzero_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'MACRO=42 (non-zero) should evaluate to true in #if')
+            return
+        end if
+
+        ! Test 4: Empty macro (defined without value) - treated as truthy
+        call cpp_config%new([string_t('EMPTY_MACRO')])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        if (.not.('empty_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'Empty macro should evaluate to true in #if')
+            return
+        end if
+
+    end subroutine test_if_macro_truthy
 
 
 end module test_source_parsing
