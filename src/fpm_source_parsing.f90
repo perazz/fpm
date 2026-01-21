@@ -278,8 +278,8 @@ subroutine parse_if_condition(lower_line, line, offset, heading_blanks, preproce
             start_pos = offset + heading_blanks
             end_pos = len_trim(lower_line) + heading_blanks
             macro_name = trim(adjustl(line(start_pos:end_pos)))
-            is_active = macro_is_truthy(macro_name, preprocess_macros) .or. &
-                        macro_is_truthy(macro_name, defined_macros)
+            is_active = macro_is_truthy(macro_name, preprocess_macros, locally_defined=.false.) .or. &
+                        macro_is_truthy(macro_name, defined_macros, locally_defined=.true.)
         end if
     end if
 
@@ -287,9 +287,12 @@ end subroutine parse_if_condition
 
 !> Check if a macro evaluates to a truthy (non-zero) value
 !> Per CPP semantics: undefined macros = 0, "0" = false, non-zero = true
-logical function macro_is_truthy(macro_name, macros)
+!> locally_defined: if true, macro comes from #define in source (empty = false per CPP)
+!>                  if false, macro comes from command line/fpm.toml (empty = true, like -DMACRO)
+logical function macro_is_truthy(macro_name, macros, locally_defined)
     character(*), intent(in) :: macro_name
     type(string_t), optional, intent(in) :: macros(:)
+    logical, intent(in) :: locally_defined
 
     character(:), allocatable :: value
     logical :: found
@@ -300,8 +303,13 @@ logical function macro_is_truthy(macro_name, macros)
     value = get_macro_value(macro_name, macros, found)
     if (.not. found) return  ! Undefined macro = false
 
-    ! Empty value (macro defined without value) = false per CPP (equivalent to 0)
-    if (len_trim(value) == 0) return
+    ! Empty value behavior depends on source:
+    ! - Command line/fpm.toml (-DMACRO): treated as -DMACRO=1, so truthy
+    ! - #define MACRO in source: empty expression, would be CPP error, treat as false
+    if (len_trim(value) == 0) then
+        macro_is_truthy = .not. locally_defined
+        return
+    end if
 
     ! Try to parse as integer
     read(value, *, iostat=ios) int_value

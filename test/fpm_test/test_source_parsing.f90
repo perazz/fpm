@@ -1901,78 +1901,90 @@ contains
 
         open(file=temp_file, newunit=unit)
         write(unit, '(a)') &
+            & '! Test #ifdef (uses macro_in_list)', &
             & '#ifdef MY_MACRO', &
-            & '  use uppercase_module', &
+            & '  use ifdef_uppercase_module', &
             & '#endif', &
             & '#ifdef my_macro', &
-            & '  use lowercase_module', &
+            & '  use ifdef_lowercase_module', &
             & '#endif', &
             & '#ifdef My_Macro', &
-            & '  use mixedcase_module', &
+            & '  use ifdef_mixedcase_module', &
+            & '#endif', &
+            & '! Test #if MACRO (uses macro_is_truthy -> get_macro_value)', &
+            & '#if MY_MACRO', &
+            & '  use if_uppercase_module', &
+            & '#endif', &
+            & '#if my_macro', &
+            & '  use if_lowercase_module', &
+            & '#endif', &
+            & '#if My_Macro', &
+            & '  use if_mixedcase_module', &
             & '#endif', &
             & 'program test', &
             & '  implicit none', &
             & 'end program test'
         close(unit)
 
-        ! Test 1: Define MY_MACRO (uppercase) - should only match uppercase
-        call cpp_config%new([string_t('MY_MACRO')])
-        cpp_config%name = "cpp"
-
-        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
-        if (allocated(error)) return
-
-        if (.not.('uppercase_module' .in. f_source%modules_used)) then
-            call test_failed(error, 'Expected uppercase_module with MY_MACRO defined')
-            return
-        end if
-
-        if ('lowercase_module' .in. f_source%modules_used) then
-            call test_failed(error, 'Should not find lowercase_module - macros are case-sensitive')
-            return
-        end if
-
-        if ('mixedcase_module' .in. f_source%modules_used) then
-            call test_failed(error, 'Should not find mixedcase_module - macros are case-sensitive')
-            return
-        end if
-
-        ! Test 2: Define my_macro (lowercase) - should only match lowercase
-        call cpp_config%new([string_t('my_macro')])
-        cpp_config%name = "cpp"
-
-        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
-        if (allocated(error)) return
-
-        if ('uppercase_module' .in. f_source%modules_used) then
-            call test_failed(error, 'Should not find uppercase_module - macros are case-sensitive')
-            return
-        end if
-
-        if (.not.('lowercase_module' .in. f_source%modules_used)) then
-            call test_failed(error, 'Expected lowercase_module with my_macro defined')
-            return
-        end if
-
-        if ('mixedcase_module' .in. f_source%modules_used) then
-            call test_failed(error, 'Should not find mixedcase_module - macros are case-sensitive')
-            return
-        end if
-
-        ! Test 3: Define macro with value - case sensitivity should still apply
+        ! Test 1: Define MY_MACRO=1 (uppercase) - should only match uppercase for both #ifdef and #if
         call cpp_config%new([string_t('MY_MACRO=1')])
         cpp_config%name = "cpp"
 
         f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
         if (allocated(error)) return
 
-        if (.not.('uppercase_module' .in. f_source%modules_used)) then
-            call test_failed(error, 'Expected uppercase_module with MY_MACRO=1 defined')
+        ! #ifdef tests (macro_in_list)
+        if (.not.('ifdef_uppercase_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#ifdef: Expected ifdef_uppercase_module with MY_MACRO defined')
+            return
+        end if
+        if ('ifdef_lowercase_module' .in. f_source%modules_used) then
+            call test_failed(error, '#ifdef: Should not find ifdef_lowercase_module - case-sensitive')
+            return
+        end if
+        if ('ifdef_mixedcase_module' .in. f_source%modules_used) then
+            call test_failed(error, '#ifdef: Should not find ifdef_mixedcase_module - case-sensitive')
             return
         end if
 
-        if ('lowercase_module' .in. f_source%modules_used) then
-            call test_failed(error, 'Should not find lowercase_module with MY_MACRO=1 - case-sensitive')
+        ! #if tests (macro_is_truthy -> get_macro_value)
+        if (.not.('if_uppercase_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if: Expected if_uppercase_module with MY_MACRO=1 defined')
+            return
+        end if
+        if ('if_lowercase_module' .in. f_source%modules_used) then
+            call test_failed(error, '#if: Should not find if_lowercase_module - case-sensitive')
+            return
+        end if
+        if ('if_mixedcase_module' .in. f_source%modules_used) then
+            call test_failed(error, '#if: Should not find if_mixedcase_module - case-sensitive')
+            return
+        end if
+
+        ! Test 2: Define my_macro=1 (lowercase) - should only match lowercase
+        call cpp_config%new([string_t('my_macro=1')])
+        cpp_config%name = "cpp"
+
+        f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
+        if (allocated(error)) return
+
+        ! #ifdef tests
+        if ('ifdef_uppercase_module' .in. f_source%modules_used) then
+            call test_failed(error, '#ifdef: Should not find ifdef_uppercase_module - case-sensitive')
+            return
+        end if
+        if (.not.('ifdef_lowercase_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#ifdef: Expected ifdef_lowercase_module with my_macro defined')
+            return
+        end if
+
+        ! #if tests
+        if ('if_uppercase_module' .in. f_source%modules_used) then
+            call test_failed(error, '#if: Should not find if_uppercase_module - case-sensitive')
+            return
+        end if
+        if (.not.('if_lowercase_module' .in. f_source%modules_used)) then
+            call test_failed(error, '#if: Expected if_lowercase_module with my_macro=1 defined')
             return
         end if
 
@@ -2056,15 +2068,15 @@ contains
             return
         end if
 
-        ! Test 4: Empty macro (defined without value) - false per CPP (equivalent to 0)
+        ! Test 4: Empty macro (defined without value) - true, like -DMACRO on command line
         call cpp_config%new([string_t('EMPTY_MACRO')])
         cpp_config%name = "cpp"
 
         f_source = parse_f_source(temp_file, error, preprocess=cpp_config)
         if (allocated(error)) return
 
-        if ('empty_module' .in. f_source%modules_used) then
-            call test_failed(error, 'Empty macro should evaluate to false in #if (per CPP)')
+        if (.not.('empty_module' .in. f_source%modules_used)) then
+            call test_failed(error, 'Empty macro should evaluate to true in #if (like -DMACRO)')
             return
         end if
 
@@ -2185,7 +2197,7 @@ contains
             return
         end if
         if ('if_empty_module' .in. f_source%modules_used) then
-            call test_failed(error, '#if MACRO: empty macro should be false (per CPP)')
+            call test_failed(error, '#if MACRO: empty macro from #define should be false (CPP error)')
             return
         end if
         if ('if_undefined_module' .in. f_source%modules_used) then
