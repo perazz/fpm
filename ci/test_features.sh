@@ -157,6 +157,16 @@ grep -q "WITH_DEBUG_DEPENDENCY" output.txt || { echo "ERROR: WITH_DEBUG_DEPENDEN
 grep -q "DEBUG mode enabled" output.txt || { echo "ERROR: DEBUG mode not enabled in dependency profile test"; exit 1; }
 echo "✓ Debug dependency profile works"
 
+# Test 15: Dependency with profile (instead of features list)
+# features_demo's "prof_feats" profile resolves to ["prof_feat1", "prof_feat2"],
+# which sets the PROF_FEAT1 and PROF_FEAT2 macros
+echo "Test 15: Dependency with profile"
+rm -rf build
+"$fpm" run --profile dep_profile > output.txt
+grep -q "PROF_FEAT1 enabled" output.txt || { echo "ERROR: PROF_FEAT1 not enabled via dependency profile=prof_feats"; exit 1; }
+grep -q "PROF_FEAT2 enabled" output.txt || { echo "ERROR: PROF_FEAT2 not enabled via dependency profile=prof_feats"; exit 1; }
+echo "Dependency profile works"
+
 # Cleanup
 rm -rf build output.txt
 popd
