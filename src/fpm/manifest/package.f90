@@ -620,7 +620,7 @@ contains
         if (apply_default) then
             idx = find_profile(self, "default")
             if (idx > 0) then
-                call apply_profile_features(self, self%profiles(idx), cfg, platform, verbose, error)
+                call apply_default_features(self, self%profiles(idx), cfg, platform, verbose, error)
                 if (allocated(error)) return
             end if
         end if
@@ -707,7 +707,7 @@ contains
     end function find_profile
 
     !> Apply all features from a profile into the package configuration
-    subroutine apply_profile_features(self, prof, cfg, platform, verbose, error)
+    subroutine apply_default_features(self, prof, cfg, platform, verbose, error)
 
         !> Instance of the package configuration
         class(package_config_t), intent(in) :: self
@@ -751,7 +751,7 @@ contains
 
         end do
 
-    end subroutine apply_profile_features
+    end subroutine apply_default_features
 
     !> Find feature by name, returns index or 0 if not found
     function find_feature(self, feature_name) result(idx)
