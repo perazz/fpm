@@ -103,9 +103,6 @@ module fpm_manifest_feature
         !> Feature dependencies (not active yet)
         type(string_t), allocatable :: requires_features(:)
         
-        !> Is this feature enabled by default
-        logical :: default = .false.
-        
     contains
 
         !> Print information on this instance
@@ -213,7 +210,7 @@ contains
                 exit
 
             ! Keys
-            case("description", "default", "platform", "flags", "c-flags", &
+            case("description", "platform", "flags", "c-flags", &
                  "cxx-flags", "link-time-flags", "preprocessor", "requires", &
                  "build", "install", "fortran", "library", "dependencies", &
                  "dev-dependencies", "executable", "example", "test", "preprocess")
@@ -427,7 +424,6 @@ contains
             end if
             
             if (.not.this%platform == other%platform) return
-            if (this%default .neqv. other%default) return
             
             if (allocated(this%build).neqv.allocated(other%build)) return
             if (allocated(this%build)) then
@@ -554,9 +550,6 @@ contains
         call set_string(table, "name", self%name, error, class_name)
         if (allocated(error)) return
         call set_string(table, "description", self%description, error, class_name)
-        if (allocated(error)) return
-        
-        call set_value(table, "default", self%default, error, class_name)
         if (allocated(error)) return
         
         call add_table(table, "platform", ptr, error, class_name)
@@ -769,13 +762,6 @@ contains
 
         call get_value(table, "name", self%name)
         call get_value(table, "description", self%description)
-        
-        
-        call get_value(table, "default", self%default, default=.true., stat=stat)
-        if (stat/=toml_stat%success) then 
-            call fatal_error(error, class_name//': error retrieving <default> key')
-            return
-        end if
 
         call get_value(table, "flags", self%flags)
         call get_value(table, "c-flags", self%c_flags)
@@ -985,9 +971,8 @@ contains
               self%platform = platform_config_t(id_all,OS_ALL)  
           end if
 
-          ! Get description and default flag
+          ! Get description
           call get_value(table, "description", self%description)
-          call get_value(table, "default", self%default, .false.)
 
           ! Get compiler flags
           call get_value(table, "flags", self%flags)
