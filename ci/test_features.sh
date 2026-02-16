@@ -308,4 +308,46 @@ echo "✓ Baseline (no profile) works"
 rm -rf build output.txt
 popd
 
+echo "=== Testing features_default_profile package ==="
+
+pushd "features_default_profile"
+
+# Test: --profile debug should include default (baseline) + debug features
+echo "Test: Default profile with --profile debug"
+rm -rf build
+"$fpm" run --profile debug > output.txt
+grep -q "BASELINE active" output.txt || { echo "ERROR: BASELINE not active with --profile debug"; exit 1; }
+grep -q "DEBUG active" output.txt || { echo "ERROR: DEBUG not active with --profile debug"; exit 1; }
+echo "Default + debug profile works"
+
+# Test: --profile release should include default (baseline) + release features
+echo "Test: Default profile with --profile release"
+rm -rf build
+"$fpm" run --profile release > output.txt
+grep -q "BASELINE active" output.txt || { echo "ERROR: BASELINE not active with --profile release"; exit 1; }
+grep -q "RELEASE active" output.txt || { echo "ERROR: RELEASE not active with --profile release"; exit 1; }
+echo "Default + release profile works"
+
+# Test: --profile myprofile (custom) should NOT include default features
+echo "Test: Custom profile skips default features"
+rm -rf build
+"$fpm" run --profile myprofile > output.txt
+grep -q "CUSTOM active" output.txt || { echo "ERROR: CUSTOM not active with --profile myprofile"; exit 1; }
+if grep -q "BASELINE active" output.txt; then
+    echo "ERROR: BASELINE should NOT be active with custom profile"
+    exit 1
+fi
+echo "Custom profile correctly skips default"
+
+# Test: no profile (implicit debug) should include default features
+echo "Test: No profile includes default features"
+rm -rf build
+"$fpm" run > output.txt
+grep -q "BASELINE active" output.txt || { echo "ERROR: BASELINE not active with no explicit profile"; exit 1; }
+echo "Implicit build includes default features"
+
+# Cleanup
+rm -rf build output.txt
+popd
+
 echo "All FPM features tests passed!"
