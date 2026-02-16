@@ -101,8 +101,8 @@ module fpm_manifest_feature
         character(len=:), allocatable :: link_time_flags
         
         !> Feature dependencies (not active yet)
-        type(string_t), allocatable :: requires_features(:)
-        
+        type(string_t), allocatable :: requires_features(:)       
+
     contains
 
         !> Print information on this instance
@@ -754,8 +754,7 @@ contains
         type(error_t), allocatable, intent(out) :: error
 
         type(toml_key), allocatable :: keys(:), pkg_keys(:)
-        integer :: ii, jj, stat
-        character(len=:), allocatable :: flag
+        integer :: ii, jj
         type(toml_table), pointer :: ptr, ptr_pkg
 
         call table%get_keys(keys)
