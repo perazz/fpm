@@ -1031,6 +1031,7 @@ subroutine run(cmd,echo,exitstat,verbose,redirect)
 
     if(echo_local) print *, '+ ', cmd !//redirect_str
 
+    stat = 0
     call execute_command_line(cmd//redirect_str, exitstat=stat,cmdstat=cmdstat,cmdmsg=cmdmsg)
 
     ! On failure only (so the success path pays nothing), distinguish a missing program
