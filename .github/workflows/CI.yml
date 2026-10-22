@@ -20,82 +20,64 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # fork CI only: gcc 16 through perazz/setup-fortran feat/gcc16, plus
+      # a Windows job with the winlibs gcc 16.1.0 build
       matrix:
-        os: [ubuntu-latest, macos-15, macos-15-intel, windows-latest]
-        toolchain:
-          - {compiler: gcc, version: 12}
-          - {compiler: gcc, version: 13}
-          - {compiler: gcc, version: 14}
-          - {compiler: gcc, version: 15}
-          - {compiler: intel, version: '2025.2'}
-          - {compiler: intel, version: '2026.1'}
-        exclude:
-          - os: macos-15  # Intel compiler does not support ARM (macos-15)
-            toolchain: {compiler: intel, version: '2025.2'}
-          - os: macos-15
-            toolchain: {compiler: intel, version: '2026.1'}
-          - os: macos-15-intel  # Intel compiler not available on macOS
-            toolchain: {compiler: intel, version: '2025.2'}
-          - os: macos-15-intel
-            toolchain: {compiler: intel, version: '2026.1'}
-          - os: windows-latest  # Doesn't pass build and tests yet
-            toolchain: {compiler: intel, version: '2025.2'}
-          - os: windows-latest
-            toolchain: {compiler: intel, version: '2026.1'}
         include:
-          # os-arch is independent of toolchain version
           - os: ubuntu-latest
             os-arch: linux-x86_64
+            toolchain: {compiler: gcc, version: 16}
           - os: macos-15
             os-arch: macos-arm64
+            toolchain: {compiler: gcc, version: 16}
             release-flags: --features openmp --flag '-g -fbacktrace -O3'
-          - os: macos-15-intel
-            os-arch: macos-x86_64
+          - os: macos-26
+            os-arch: macos26-arm64
+            toolchain: {compiler: gcc, version: 16}
             release-flags: --features openmp --flag '-g -fbacktrace -O3'
           - os: windows-latest
             os-arch: windows-x86_64
+            toolchain: {compiler: gcc, version: 16}
             release-flags: --features openmp --flag '--static -g -fbacktrace -O3'
             exe: .exe
-          # Linux per-toolchain release-flags. gcc 14 builds the shipped
-          # artifact and activates the openmp metapackage via the
-          # `openmp` feature (see fpm.toml). Older gcc on linux segfault
-          # with --static + libgomp at atexit teardown (see issue #962),
-          # so they omit `--features openmp` and remain serial.
-          - os: ubuntu-latest
-            toolchain: {compiler: gcc, version: 12}
-            release-flags: --flag '--static -g -fbacktrace -O3'
-          - os: ubuntu-latest
-            toolchain: {compiler: gcc, version: 13}
-            release-flags: --flag '--static -g -fbacktrace -O3'
-          - os: ubuntu-latest
-            toolchain: {compiler: gcc, version: 14}
+          - os: windows-latest
+            os-arch: windows-x86_64-winlibs
+            toolchain: {compiler: gcc, version: 16}
+            winlibs: true
             release-flags: --features openmp --flag '--static -g -fbacktrace -O3'
-          - os: ubuntu-latest
-            toolchain: {compiler: intel, version: '2025.2'}
-            release-flags: --flag '--static -g -fbacktrace -O3'
-          - os: ubuntu-latest
-            toolchain: {compiler: intel, version: '2026.1'}
-            release-flags: --flag '--static -g -fbacktrace -O3'
-          - os: macos-15
-            toolchain: {compiler: gcc, version: 15}
-            release-flags: --flag '-g -fbacktrace -Og -fcheck=all,no-recursion -Wno-external-argument-mismatch'
-          # Newest macOS image, test only: release artifacts stay on the oldest
-          # supported image (macos-15) so that they run on older macOS versions.
-          - os: macos-26
-            os-arch: macos26-arm64
-            toolchain: {compiler: gcc, version: 15}
-            release-flags: --features openmp --flag '-g -fbacktrace -O3'
+            exe: .exe
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
 
     - name: Setup Fortran compiler
-      uses: fortran-lang/setup-fortran@v1.10.0
+      if: ${{ !matrix.winlibs }}
+      uses: perazz/setup-fortran@feat/gcc16
       id: setup-fortran
       with:
         compiler: ${{ matrix.toolchain.compiler }}
         version: ${{ matrix.toolchain.version }}
+
+    - name: Setup winlibs gcc 16.1.0
+      if: ${{ matrix.winlibs }}
+      shell: bash
+      run: |
+        curl -fsSL -o winlibs.zip "https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r1/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r1.zip"
+        echo "325771f545e89f62c0e1fafdbf0066cc49e3321aeca7b704c8d065e97a72f2fb  winlibs.zip" | sha256sum -c -
+        unzip -q winlibs.zip -d "$RUNNER_TEMP/winlibs"
+        rm winlibs.zip
+        echo "$RUNNER_TEMP\winlibs\mingw64\bin" >> "$GITHUB_PATH"
+        {
+          echo "FC=gfortran"; echo "CC=gcc"; echo "CXX=g++"
+          echo "FPM_FC=gfortran"; echo "FPM_CC=gcc"; echo "FPM_CXX=g++"
+        } >> "$GITHUB_ENV"
+
+    - name: Show gfortran version
+      shell: bash
+      run: |
+        command -v gfortran
+        gfortran --version
 
     # Phase 1: Bootstrap fpm with existing version
     - name: Install fpm
@@ -302,173 +284,3 @@ jobs:
         path: ${{ env.FPM_RELEASE }}
 
 
-  make-installer:
-    if: ${{ github.event_name == 'release' && contains(github.ref, 'v') || github.event_name == 'push' }}
-    runs-on: windows-latest
-    needs:
-      - build
-    strategy:
-      fail-fast: false
-      matrix:
-        gcc_v: [14] # must match the toolchain uploaded by upload-artifacts
-
-    steps:
-    - uses: actions/checkout@v6
-
-    - name: Download Artifacts
-      id: download_windows_artifacts
-      uses: actions/download-artifact@v8
-      with:
-        path: ${{ github.workspace }}
-        pattern: fpm-*-windows-*-gcc-${{ matrix.gcc_v }}.exe
-
-    - name: Get version (normal)
-      if: github.event_name != 'release'
-      shell: bash
-      run: |
-        VERSION=$(git rev-parse --short HEAD)
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
-
-    - name: Get version (release)
-      if: github.event_name == 'release'
-      shell: bash
-      run: |
-        VERSION=$(echo "$GITHUB_REF" | cut -dv -f2)
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
-      env:
-        REGEX: '[0-9]\{1,4\}\.[0-9]\{1,4\}\.[0-9]\{1,4\}'
-
-    - name: Setup MinGW (MSYS2)
-      uses: msys2/setup-msys2@v2
-      with:
-        msystem: MINGW64
-        update: false
-        install: >-
-          wget
-          unzip
-
-    - name: Fetch Windows executable
-      shell: msys2 {0}
-      run: |
-        set -e
-        download_path='${{ steps.download_windows_artifacts.outputs.download-path }}'
-        download_path=$(printf '%s\n' "$download_path" | head -n1)
-        if [ -z "$download_path" ]; then
-          echo "download-artifact did not report a download path" >&2
-          exit 1
-        fi
-        if command -v cygpath >/dev/null 2>&1; then
-          posix_path=$(cygpath -u "$download_path")
-        else
-          posix_path="$download_path"
-        fi
-        exe_path=$(find "$posix_path" -maxdepth 2 -type f -name "fpm-*-windows-*-gcc-${{ matrix.gcc_v }}.exe" | head -n 1)
-        if [ -z "$exe_path" ]; then
-          echo "Windows executable not found under $posix_path" >&2
-          ls -al "$posix_path" || true
-          exit 1
-        fi
-        cp "$exe_path" ./ci/fpm.exe
-
-    - name: Fetch Git for Windows
-      shell: msys2 {0}
-      run: |
-        cd ./ci
-        wget ${{ env.git_download }} -O MinGit.zip
-        unzip MinGit.zip -d MinGit
-      env:
-        git_download: "https://github.com/git-for-windows/git/releases/download/v2.33.1.windows.1/MinGit-2.33.1-64-bit.zip"
-
-    - name: Fetch EnVar Plugin for NSIS
-      shell: msys2 {0}
-      run: |
-        cd ./ci
-        wget ${{ env.envar_download }} -O EnVar-Plugin.zip
-        mkdir EnVar_plugin
-        unzip EnVar-Plugin.zip -d EnVar_plugin
-      env:
-        envar_download: "https://github.com/GsNSIS/EnVar/releases/download/v0.3.1/EnVar-Plugin.zip"
-
-    - name: Install NSIS
-      run: choco install nsis -y
-      shell: pwsh
-
-    - name: Add NSIS to PATH
-      shell: pwsh
-      run: |
-        $dirs = @(
-          "${env:ProgramFiles(x86)}\NSIS",
-          "${env:ProgramFiles}\NSIS"
-        ) | Where-Object { $_ -and (Test-Path $_) }
-        if (-not $dirs) { throw "NSIS not found under Program Files." }
-        $dirs | ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
-
-    - name: Generate installer
-      run: |
-        cd ./ci
-        makensis fpm-installer.nsi
-        move fpm-installer.exe fpm-installer-${{ env.VERSION }}-gcc-${{ matrix.gcc_v }}.exe
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v7
-      with:
-        name: fpm-installer-gcc-${{ matrix.gcc_v }}
-        path: ci/fpm-installer-${{ env.VERSION }}-gcc-${{ matrix.gcc_v }}.exe
-
-  upload-artifacts:
-    if: ${{ github.event_name == 'release' && contains(github.ref, 'v') || github.event_name == 'push' }}
-    runs-on: ubuntu-latest
-    needs:
-      - build
-      - make-installer
-
-    steps:
-    - id: deploy-on-push
-      if: ${{ github.event_name == 'push' }}
-      run:
-        echo "result=${{ env.DEPLOY_BRANCH }}" >> "$GITHUB_OUTPUT"
-      env:
-        DEPLOY_BRANCH: ${{ secrets.DEPLOY_BRANCH && contains(github.ref, secrets.DEPLOY_BRANCH) && 1 || 0 }}
-
-    - uses: actions/checkout@v6
-      if: ${{ github.event_name == 'push' }}
-
-    - name: Download Artifacts
-      uses: actions/download-artifact@v8
-      with:
-        path: fpm-cd-artifacts
-        pattern: 'fpm-*-gcc-14*'
-        merge-multiple: true
-
-    - name: Normalize file names for continuous delivery
-      if: ${{ github.event_name == 'push' }}
-      run: |
-        cd fpm-cd-artifacts
-        for output in fpm-*; do
-          mv -v $(basename $output) $(basename $output | sed -E '${{ env.replace }}')
-        done
-      env:
-        replace: 's/-([0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g)?[0-9a-f]+//'
-
-    - name: Create SHA256 checksums
-      run: |
-        cd fpm-cd-artifacts
-        for output in fpm-*; do
-          sha256sum $(basename "$output") | tee $(basename "$output").sha256
-        done
-
-    - name: Move/Create continuous tag
-      if: ${{ github.event_name == 'push' && steps.deploy-on-push.outputs.result != 0 }}
-      run: |
-        git tag --force 'current' "$GITHUB_SHA"
-        git push --tags --force
-
-    - name: Upload assets
-      uses: svenstaro/upload-release-action@v2
-      if: ${{ github.event_name == 'release' || steps.deploy-on-push.outputs.result != 0 }}
-      with:
-        repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: fpm-cd-artifacts/*
-        file_glob: true
-        tag: ${{ github.event_name == 'release' && github.ref || 'current'}}
-        overwrite: true
