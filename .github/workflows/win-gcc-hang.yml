@@ -1,0 +1,126 @@
+name: Windows gcc hang
+
+# Diagnostic for the intermittent hang of fpm-test in serialize-executable-config
+# on windows-latest with gcc 15. gcc 14 is the control.
+on:
+  push:
+    branches: [test/win-gcc15-hang]
+
+jobs:
+  # Find where the memory read by the hanging finalizer was freed: on Linux,
+  # valgrind catches the invalid read on every run
+  valgrind:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        gcc: [14, 15, 16]
+    env:
+      GCC: ${{ matrix.gcc }}
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Setup gcc
+      if: matrix.gcc != 16
+      uses: fortran-lang/setup-fortran@v1.10.0
+      with:
+        compiler: gcc
+        version: ${{ matrix.gcc }}
+
+    # setup-fortran v1.10.0 does not support gcc 16 yet
+    - name: Setup gcc 16
+      if: matrix.gcc == 16
+      uses: ./.github/actions/setup-gcc16
+
+    - uses: fortran-lang/setup-fpm@v9
+      with:
+        fpm-version: 'v0.13.0'
+
+    - name: Install valgrind
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq valgrind
+        valgrind --version
+        "${FPM_FC:-gfortran}" --version | head -n 1
+
+    # Same flags as CI's "Test Fortran fpm (bootstrap)" step, plus -g
+    - name: Build fpm-test
+      run: |
+        fpm build --tests --flag " -Wno-external-argument-mismatch -g"
+        exe=$(find build -path '*/test/fpm-test' | head -n 1)
+        echo "EXE=$PWD/$exe" >> "$GITHUB_ENV"
+        echo "fpm-test: $exe"
+
+    - name: valgrind, serialize-executable-config alone
+      if: always()
+      run: .github/diag/valgrind.sh single fpm_toml serialize-executable-config
+
+    - name: valgrind, the fpm_toml suite
+      if: always()
+      run: .github/diag/valgrind.sh suite fpm_toml
+
+  # Before the fix, gcc 15 hung in about 1 in 5 suite runs
+  loop:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        gcc: [15]
+    env:
+      GCC: ${{ matrix.gcc }}
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - uses: fortran-lang/setup-fortran@v1.10.0
+      with:
+        compiler: gcc
+        version: ${{ matrix.gcc }}
+
+    - uses: fortran-lang/setup-fpm@v9
+      with:
+        fpm-version: 'v0.13.0'
+
+    - name: Find gdb
+      shell: pwsh
+      run: |
+        # Prefer the toolchain's own gdb.exe over Chocolatey's shim of it
+        $gdb = Get-ChildItem C:\ProgramData\mingw64, C:\mingw64 -Recurse -Filter gdb.exe -ErrorAction SilentlyContinue |
+               Select-Object -First 1 -ExpandProperty FullName
+        if (-not $gdb) { $gdb = (Get-Command gdb.exe -ErrorAction SilentlyContinue).Source }
+        if (-not $gdb) {
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gdb | Out-Host
+          $gdb = 'C:\msys64\mingw64\bin\gdb.exe'
+        }
+        & $gdb --version | Select-Object -First 1
+        "GDB=$gdb" >> $env:GITHUB_ENV
+        gfortran --version | Select-Object -First 1
+        fpm --version | Select-Object -First 1
+
+    # Same flags as CI's "Test Fortran fpm (bootstrap)" step, plus -g, which
+    # does not change the generated code
+    - name: Build fpm-test
+      shell: bash
+      run: |
+        fpm build --tests --flag " -Wno-external-argument-mismatch -g"
+        exe=$(find build -path '*/test/fpm-test.exe' | head -n 1)
+        echo "EXE=$(cygpath -w "$PWD/$exe")" >> "$GITHUB_ENV"
+        echo "fpm-test: $exe"
+
+    - name: Loop serialize-executable-config alone
+      if: always()
+      shell: pwsh
+      run: ./.github/diag/hang-loop.ps1 -Label single -Runs 300 -TimeoutSec 60 -TestArgs fpm_toml, serialize-executable-config
+
+    - name: Loop the fpm_toml suite
+      if: always()
+      shell: pwsh
+      run: ./.github/diag/hang-loop.ps1 -Label suite -Runs 150 -TimeoutSec 120 -TestArgs fpm_toml
+
+    - name: Loop all of fpm-test
+      if: always()
+      shell: pwsh
+      run: ./.github/diag/hang-loop.ps1 -Label all -Runs 20 -TimeoutSec 300
