@@ -61,9 +61,8 @@ jobs:
       if: always()
       run: .github/diag/valgrind.sh suite fpm_toml
 
-  # Done: gcc 15 hangs in about 1 in 5 suite runs, gcc 14 never
+  # Before the fix, gcc 15 hung in about 1 in 5 suite runs
   loop:
-    if: false
     runs-on: windows-latest
     timeout-minutes: 120
     strategy:
