@@ -7,7 +7,63 @@ on:
     branches: [test/win-gcc15-hang]
 
 jobs:
+  # Find where the memory read by the hanging finalizer was freed: on Linux,
+  # valgrind catches the invalid read on every run
+  valgrind:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        gcc: [14, 15, 16]
+    env:
+      GCC: ${{ matrix.gcc }}
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Setup gcc
+      if: matrix.gcc != 16
+      uses: fortran-lang/setup-fortran@v1.10.0
+      with:
+        compiler: gcc
+        version: ${{ matrix.gcc }}
+
+    # setup-fortran v1.10.0 does not support gcc 16 yet
+    - name: Setup gcc 16
+      if: matrix.gcc == 16
+      uses: ./.github/actions/setup-gcc16
+
+    - uses: fortran-lang/setup-fpm@v9
+      with:
+        fpm-version: 'v0.13.0'
+
+    - name: Install valgrind
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq valgrind
+        valgrind --version
+        "${FPM_FC:-gfortran}" --version | head -n 1
+
+    # Same flags as CI's "Test Fortran fpm (bootstrap)" step, plus -g
+    - name: Build fpm-test
+      run: |
+        fpm build --tests --flag " -Wno-external-argument-mismatch -g"
+        exe=$(find build -path '*/test/fpm-test' | head -n 1)
+        echo "EXE=$PWD/$exe" >> "$GITHUB_ENV"
+        echo "fpm-test: $exe"
+
+    - name: valgrind, serialize-executable-config alone
+      if: always()
+      run: .github/diag/valgrind.sh single fpm_toml serialize-executable-config
+
+    - name: valgrind, the fpm_toml suite
+      if: always()
+      run: .github/diag/valgrind.sh suite fpm_toml
+
+  # Done: gcc 15 hangs in about 1 in 5 suite runs, gcc 14 never
   loop:
+    if: false
     runs-on: windows-latest
     timeout-minutes: 120
     strategy:
