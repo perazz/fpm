@@ -5,7 +5,6 @@ name: Windows gcc hang
 on:
   push:
     branches: [test/win-gcc15-hang]
-  pull_request:
 
 jobs:
   loop:
@@ -14,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gcc: [15, 14]
+        gcc: [15]
     env:
       GCC: ${{ matrix.gcc }}
 
@@ -33,11 +32,10 @@ jobs:
     - name: Find gdb
       shell: pwsh
       run: |
-        $gdb = (Get-Command gdb.exe -ErrorAction SilentlyContinue).Source
-        if (-not $gdb) {
-          $gdb = Get-ChildItem C:\ProgramData\mingw64, C:\mingw64 -Recurse -Filter gdb.exe -ErrorAction SilentlyContinue |
-                 Select-Object -First 1 -ExpandProperty FullName
-        }
+        # Prefer the toolchain's own gdb.exe over Chocolatey's shim of it
+        $gdb = Get-ChildItem C:\ProgramData\mingw64, C:\mingw64 -Recurse -Filter gdb.exe -ErrorAction SilentlyContinue |
+               Select-Object -First 1 -ExpandProperty FullName
+        if (-not $gdb) { $gdb = (Get-Command gdb.exe -ErrorAction SilentlyContinue).Source }
         if (-not $gdb) {
           C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gdb | Out-Host
           $gdb = 'C:\msys64\mingw64\bin\gdb.exe'

@@ -13,6 +13,8 @@ $gdb = $env:GDB
 $ok = 0; $failed = 0; $hangs = 0; $done = 0
 $out = Join-Path $env:RUNNER_TEMP "$Label-out.txt"
 $err = Join-Path $env:RUNNER_TEMP "$Label-err.txt"
+$gdbFull = Join-Path $env:RUNNER_TEMP 'gdb-full.txt'
+$gdbAgain = Join-Path $env:RUNNER_TEMP 'gdb-again.txt'
 $clock = [Diagnostics.Stopwatch]::StartNew()
 
 for ($i = 1; $i -le $Runs; $i++) {
@@ -47,13 +49,15 @@ for ($i = 1; $i -le $Runs; $i++) {
             $q.TotalProcessorTime.TotalSeconds, $q.Threads.Count, $q.HandleCount) | Write-Host
         Start-Sleep -Seconds 2
     }
-    foreach ($pass in 1, 2) {
-        Write-Host "--- gdb backtrace, pass $pass"
-        & $gdb -p $p.Id -batch -nx -ex 'set pagination off' -ex 'info threads' -ex 'thread apply all bt 40' 2>&1 | Write-Host
-        Start-Sleep -Seconds 3
-    }
-    Write-Host '--- gdb locals, innermost frames of thread 1'
-    & $gdb -p $p.Id -batch -nx -ex 'set pagination off' -ex 'thread 1' -ex 'bt full 8' 2>&1 | Write-Host
+    # Commands go through a file: Chocolatey's gdb shim splits -ex arguments at spaces
+    Write-Host '--- gdb: all threads, then locals of the innermost frames of thread 1'
+    @('set pagination off', 'set width 0', 'info threads', 'thread apply all bt 40',
+      'thread 1', 'bt full 10') | Set-Content -Encoding ascii $gdbFull
+    & $gdb -p $p.Id -batch -nx -x $gdbFull 2>&1 | Write-Host
+    Start-Sleep -Seconds 3
+    Write-Host '--- gdb: thread 1 again, 3 s later'
+    @('set pagination off', 'set width 0', 'thread 1', 'bt 40') | Set-Content -Encoding ascii $gdbAgain
+    & $gdb -p $p.Id -batch -nx -x $gdbAgain 2>&1 | Write-Host
     Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
     if ($hangs -ge $MaxHangs) { break }
 }
