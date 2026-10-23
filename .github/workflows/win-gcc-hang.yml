@@ -1,0 +1,73 @@
+name: Windows gcc hang
+
+# Diagnostic for the intermittent hang of fpm-test in serialize-executable-config
+# on windows-latest with gcc 15. gcc 14 is the control.
+on:
+  push:
+    branches: [test/win-gcc15-hang]
+  pull_request:
+
+jobs:
+  loop:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        gcc: [15, 14]
+    env:
+      GCC: ${{ matrix.gcc }}
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - uses: fortran-lang/setup-fortran@v1.10.0
+      with:
+        compiler: gcc
+        version: ${{ matrix.gcc }}
+
+    - uses: fortran-lang/setup-fpm@v9
+      with:
+        fpm-version: 'v0.13.0'
+
+    - name: Find gdb
+      shell: pwsh
+      run: |
+        $gdb = (Get-Command gdb.exe -ErrorAction SilentlyContinue).Source
+        if (-not $gdb) {
+          $gdb = Get-ChildItem C:\ProgramData\mingw64, C:\mingw64 -Recurse -Filter gdb.exe -ErrorAction SilentlyContinue |
+                 Select-Object -First 1 -ExpandProperty FullName
+        }
+        if (-not $gdb) {
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gdb | Out-Host
+          $gdb = 'C:\msys64\mingw64\bin\gdb.exe'
+        }
+        & $gdb --version | Select-Object -First 1
+        "GDB=$gdb" >> $env:GITHUB_ENV
+        gfortran --version | Select-Object -First 1
+        fpm --version | Select-Object -First 1
+
+    # Same flags as CI's "Test Fortran fpm (bootstrap)" step, plus -g, which
+    # does not change the generated code
+    - name: Build fpm-test
+      shell: bash
+      run: |
+        fpm build --tests --flag " -Wno-external-argument-mismatch -g"
+        exe=$(find build -path '*/test/fpm-test.exe' | head -n 1)
+        echo "EXE=$(cygpath -w "$PWD/$exe")" >> "$GITHUB_ENV"
+        echo "fpm-test: $exe"
+
+    - name: Loop serialize-executable-config alone
+      if: always()
+      shell: pwsh
+      run: ./.github/diag/hang-loop.ps1 -Label single -Runs 300 -TimeoutSec 60 -TestArgs fpm_toml, serialize-executable-config
+
+    - name: Loop the fpm_toml suite
+      if: always()
+      shell: pwsh
+      run: ./.github/diag/hang-loop.ps1 -Label suite -Runs 150 -TimeoutSec 120 -TestArgs fpm_toml
+
+    - name: Loop all of fpm-test
+      if: always()
+      shell: pwsh
+      run: ./.github/diag/hang-loop.ps1 -Label all -Runs 20 -TimeoutSec 300
