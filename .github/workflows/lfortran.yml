@@ -14,23 +14,28 @@ env:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15, windows-latest]
+        # Not windows-latest: LFortran targets MSVC there, and fpm's C sources
+        # need POSIX headers that MSVC does not have, as with Intel in CI.yml
+        os: [ubuntu-latest, macos-15]
         lfortran: ['0.67.0']
-        include:
-          - os: windows-latest
-            exe: .exe
     defaults:
       run:
-        # On Windows, LFortran is only found by name from bash
         shell: bash
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
+
+    - name: Setup gfortran
+      id: setup-gcc
+      uses: fortran-lang/setup-fortran@v1.10.0
+      with:
+        compiler: gcc
+        version: 14
 
     # setup-fortran's latest is an older LFortran: pin the version
     - name: Setup LFortran
@@ -39,48 +44,56 @@ jobs:
         compiler: lfortran
         version: ${{ matrix.lfortran }}
 
-    # setup-fpm's macOS binary needs gfortran's runtime: on all runners, take
-    # fpm from conda-forge instead, next to LFortran
+    # setup-fpm's macOS binary needs gfortran 13's runtime: take fpm from
+    # conda-forge instead, next to LFortran
     - name: Install fpm
       run: |
         micromamba install -n base -c conda-forge -y fpm=0.13.0
-        {
-          echo "FPM_FC=lfortran"; echo "FPM_CC=$CC"; echo "FPM_CXX=$CXX"
-        } >> "$GITHUB_ENV"
         lfortran --version
         fpm --version
 
-    - name: Build fpm (debug)
+    # Build with LFortran from this fpm, not fpm 0.13.0, to use its LFortran flags
+    - name: Build fpm with gfortran
+      run: |
+        fpm run --compiler "${{ steps.setup-gcc.outputs.fc }}" \
+                --c-compiler "${{ steps.setup-gcc.outputs.cc }}" \
+                --runner cp -- "$RUNNER_TEMP/fpm"
+        {
+          echo "FPM=$RUNNER_TEMP/fpm"
+          echo "FPM_FC=lfortran"; echo "FPM_CC=$CC"; echo "FPM_CXX=$CXX"
+        } >> "$GITHUB_ENV"
+
+    - name: Build fpm with LFortran (debug)
       id: build-debug
-      run: fpm build
+      run: $FPM build
 
-    - name: Build fpm (release)
+    - name: Build fpm with LFortran (release)
       id: build-release
-      if: ${{ !cancelled() }}
-      run: fpm build --profile release
+      if: ${{ !cancelled() && steps.build-debug.outcome != 'skipped' }}
+      run: $FPM build --profile release
 
-    - name: Run fpm
+    - name: Run fpm built with LFortran
       id: run
       if: ${{ !cancelled() && steps.build-debug.outcome == 'success' }}
       continue-on-error: true
       run: |
-        fpm run -- --version
-        fpm run -- --help
-        fpm run --runner cp -- "fpm-lfortran${{ matrix.exe }}"
+        $FPM run -- --version
+        $FPM run -- --help
+        $FPM run --runner cp -- "$RUNNER_TEMP/fpm-lfortran"
 
-    - name: Test fpm
+    - name: Test fpm with LFortran
       id: test
       if: ${{ !cancelled() && steps.build-debug.outcome == 'success' }}
       continue-on-error: true
-      timeout-minutes: 30
-      run: fpm test
+      timeout-minutes: 20
+      run: $FPM test
 
-    - name: Build and run the example packages
+    - name: Build and run the example packages with fpm built with LFortran
       id: examples
       if: ${{ !cancelled() && steps.run.outcome == 'success' }}
       continue-on-error: true
-      timeout-minutes: 30
-      run: ci/run_tests.sh "$PWD/fpm-lfortran${{ matrix.exe }}"
+      timeout-minutes: 20
+      run: ci/run_tests.sh "$RUNNER_TEMP/fpm-lfortran"
 
     - name: Summary
       if: always()
@@ -89,9 +102,9 @@ jobs:
           echo "### LFortran ${{ matrix.lfortran }} on ${{ matrix.os }}"
           echo "| Step | Outcome |"
           echo "| --- | --- |"
-          echo "| Build fpm (debug) | ${{ steps.build-debug.outcome }} |"
-          echo "| Build fpm (release) | ${{ steps.build-release.outcome }} |"
-          echo "| Run fpm | ${{ steps.run.outcome }} |"
-          echo "| Test fpm | ${{ steps.test.outcome }} |"
+          echo "| Build fpm with LFortran (debug) | ${{ steps.build-debug.outcome }} |"
+          echo "| Build fpm with LFortran (release) | ${{ steps.build-release.outcome }} |"
+          echo "| Run fpm built with LFortran | ${{ steps.run.outcome }} |"
+          echo "| Test fpm with LFortran | ${{ steps.test.outcome }} |"
           echo "| Example packages | ${{ steps.examples.outcome }} |"
         } >> "$GITHUB_STEP_SUMMARY"
