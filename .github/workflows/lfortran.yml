@@ -1,0 +1,97 @@
+name: LFortran
+
+# LFortran is in alpha: fpm must build with it, in both profiles, while its test
+# suite and the example packages run without failing the job, to track progress
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CI: "ON"
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+        lfortran: ['0.67.0']
+        include:
+          - os: windows-latest
+            exe: .exe
+    defaults:
+      run:
+        # On Windows, LFortran is only found by name from bash
+        shell: bash
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    # setup-fortran's latest is an older LFortran: pin the version
+    - name: Setup LFortran
+      uses: fortran-lang/setup-fortran@v1.10.0
+      with:
+        compiler: lfortran
+        version: ${{ matrix.lfortran }}
+
+    # setup-fpm's macOS binary needs gfortran's runtime: on all runners, take
+    # fpm from conda-forge instead, next to LFortran
+    - name: Install fpm
+      run: |
+        micromamba install -n base -c conda-forge -y fpm=0.13.0
+        {
+          echo "FPM_FC=lfortran"; echo "FPM_CC=$CC"; echo "FPM_CXX=$CXX"
+        } >> "$GITHUB_ENV"
+        lfortran --version
+        fpm --version
+
+    - name: Build fpm (debug)
+      id: build-debug
+      run: fpm build
+
+    - name: Build fpm (release)
+      id: build-release
+      if: ${{ !cancelled() }}
+      run: fpm build --profile release
+
+    - name: Run fpm
+      id: run
+      if: ${{ !cancelled() && steps.build-debug.outcome == 'success' }}
+      continue-on-error: true
+      run: |
+        fpm run -- --version
+        fpm run -- --help
+        fpm run --runner cp -- "fpm-lfortran${{ matrix.exe }}"
+
+    - name: Test fpm
+      id: test
+      if: ${{ !cancelled() && steps.build-debug.outcome == 'success' }}
+      continue-on-error: true
+      timeout-minutes: 30
+      run: fpm test
+
+    - name: Build and run the example packages
+      id: examples
+      if: ${{ !cancelled() && steps.run.outcome == 'success' }}
+      continue-on-error: true
+      timeout-minutes: 30
+      run: ci/run_tests.sh "$PWD/fpm-lfortran${{ matrix.exe }}"
+
+    - name: Summary
+      if: always()
+      run: |
+        {
+          echo "### LFortran ${{ matrix.lfortran }} on ${{ matrix.os }}"
+          echo "| Step | Outcome |"
+          echo "| --- | --- |"
+          echo "| Build fpm (debug) | ${{ steps.build-debug.outcome }} |"
+          echo "| Build fpm (release) | ${{ steps.build-release.outcome }} |"
+          echo "| Run fpm | ${{ steps.run.outcome }} |"
+          echo "| Test fpm | ${{ steps.test.outcome }} |"
+          echo "| Example packages | ${{ steps.examples.outcome }} |"
+        } >> "$GITHUB_STEP_SUMMARY"
