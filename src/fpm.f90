@@ -14,7 +14,7 @@ use fpm_model, only: fpm_model_t, srcfile_t, show_model, &
                     FPM_SCOPE_APP, FPM_SCOPE_EXAMPLE, FPM_SCOPE_TEST
 use fpm_compiler, only: new_compiler, new_archiver, set_cpp_preprocessor_flags, &
                         id_intel_classic_nix,id_intel_classic_mac,id_intel_llvm_nix, &
-                        id_intel_llvm_unknown
+                        id_intel_llvm_unknown, id_lfortran, flag_lfortran_required
 
 
 use fpm_sources, only: add_executable_sources, add_sources_from_dir
@@ -388,6 +388,10 @@ subroutine new_compiler_flags(model, settings, package)
         ! Intel compilers need -fPIC for shared libraries (except Windows)
         fallback = " -fPIC"
         
+    elseif (model%compiler%id == id_lfortran) then
+
+        fallback = flag_lfortran_required
+
     else
         
         if (allocated(fallback)) deallocate(fallback) ! trigger .not.present

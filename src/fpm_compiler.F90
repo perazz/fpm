@@ -270,6 +270,11 @@ character(*), parameter :: &
     flag_lfortran_implicit_external = " --implicit-interface", &
     flag_lfortran_fixed_form = " --fixed-form"
 
+!> LFortran needs these in every build: standard reallocation on assignment and
+!> loop variable after the loop, and one object per source, as fpm links them
+character(*), parameter :: flag_lfortran_required = &
+    " --realloc-lhs-arrays --use-loop-variable-after-loop --separate-compilation"
+
 character(*), parameter :: &
     flag_cray_no_implicit_typing = " -dl", &
     flag_cray_implicit_typing = " -el", &
@@ -322,6 +327,8 @@ function get_default_flags(self, release) result(flags)
     end select
 
     flags = flags // pic_flag
+
+    if (self%id == id_lfortran) flags = flags // flag_lfortran_required
 
 end function get_default_flags
 
