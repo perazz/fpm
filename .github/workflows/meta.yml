@@ -68,7 +68,9 @@ jobs:
     - name: (Ubuntu) setup gcc version
       if: contains(matrix.os,'ubuntu')
       run: |
-        echo "GCC_V=14" >> $GITHUB_ENV
+        # Must match the gfortran that built the system Fortran modules (MPI, HDF5,
+        # NetCDF): 15 on ubuntu-26.04. Intel jobs build their own libraries.
+        echo "GCC_V=${{ matrix.mpi == 'intel' && '14' || '15' }}" >> $GITHUB_ENV
 
     - name: (macOS) setup gcc version
       if: contains(matrix.os,'macos')
