@@ -95,7 +95,7 @@ module fpm_meta_openmp
             !> and `_OPENMP` undefined, with no diagnostic
             !> Metapackages are resolved twice: warn only once
             if (.not.warned) write(stdout,'(a)') '<WARNING> compiler '//compiler%name()// &
-                ' failed the OpenMP probe with "'//trim(adjustl(openmp_flag))// &
+                ' failed the OpenMP verification with "'//trim(adjustl(openmp_flag))// &
                 '": Fortran sources will be built WITHOUT OpenMP'
             warned = .true.
         endif
