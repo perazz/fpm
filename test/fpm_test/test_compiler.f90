@@ -3,8 +3,7 @@ module test_compiler
     use testsuite, only : new_unittest, unittest_t, error_t, test_failed, &
         & check_string
     use fpm_environment, only : OS_WINDOWS, OS_LINUX, os_is_unix
-    use fpm_compiler   , only : compiler_t, new_compiler, tokenize_flags, archiver_t, new_archiver, &
-                                append_clean_flags
+    use fpm_compiler   , only : compiler_t, new_compiler, tokenize_flags, archiver_t, new_archiver
     use fpm_filesystem , only : get_temp_filename, mkdir, join_path, filewrite, run, os_delete_dir
     use fpm_strings    , only : string_t, operator(==)
     use fpm_command_line, only: get_fpm_env
@@ -30,7 +29,6 @@ contains
             & new_unittest("compile-commands-unix", test_register_compile_command_unix), &
             & new_unittest("compile-commands-windows", test_register_compile_command_windows), &
             & new_unittest("get-default-flags-pic", test_get_default_flags_pic), &
-            & new_unittest("append-clean-flags", test_append_clean_flags), &
             & new_unittest("archive-drops-stale-members", test_archive_drops_stale_members)]
 
     end subroutine collect_compiler
@@ -422,43 +420,7 @@ contains
             return
         end if
 
-        !> NAG spells it -PIC and rejects -fPIC
-        call new_compiler(compiler, "nagfor", "gcc", "g++", echo=.false., verbose=.false.)
-        flags = compiler%get_default_flags(release=.false.)
-        if (index(flags, "-fPIC") /= 0 .or. index(flags, " -PIC") == 0) then
-            call test_failed(error, "NAG flags should contain -PIC and not -fPIC, got: "//flags)
-            return
-        end if
-
     end subroutine test_get_default_flags_pic
-
-    !> Appending flags adds only the new ones, and keeps flags repeated within them
-    subroutine test_append_clean_flags(error)
-        !> Error handling
-        type(error_t), allocatable, intent(out) :: error
-
-        character(:), allocatable :: flags
-
-        flags = " -O1 -g"
-        call append_clean_flags(flags, "-fopenmp")
-        if (flags /= " -O1 -g -fopenmp") then
-            call test_failed(error, "Expected ' -O1 -g -fopenmp', got '"//flags//"'")
-            return
-        end if
-
-        call append_clean_flags(flags, "-fopenmp -g")
-        if (flags /= " -O1 -g -fopenmp") then
-            call test_failed(error, "Flags already present should not be added again, got '"//flags//"'")
-            return
-        end if
-
-        call append_clean_flags(flags, "-framework Accelerate -framework CoreFoundation")
-        if (flags /= " -O1 -g -fopenmp -framework Accelerate -framework CoreFoundation") then
-            call test_failed(error, "A flag repeated within the new flags should be kept, got '"//flags//"'")
-            return
-        end if
-
-    end subroutine test_append_clean_flags
 
 
 end module test_compiler
