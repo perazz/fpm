@@ -574,7 +574,6 @@ contains
 
         type(fpm_model_t) :: model
         type(build_target_ptr), allocatable :: targets(:)
-        character(:), allocatable :: scope_str
 
         allocate(model%external_modules(0))
         allocate(model%packages(1))
@@ -605,7 +604,7 @@ contains
         if (allocated(error)) return
 
         if (size(targets) /= 5) then
-            call test_failed(error,scope_str//'Incorrect number of targets - expecting five')
+            call test_failed(error,'Incorrect number of targets - expecting five')
             return
         end if
 
@@ -649,7 +648,6 @@ contains
 
         type(fpm_model_t) :: model
         type(build_target_ptr), allocatable :: targets(:)
-        character(:), allocatable :: scope_str
 
         allocate(model%external_modules(0))
         allocate(model%packages(1))
@@ -678,7 +676,7 @@ contains
         if (allocated(error)) return
 
         if (size(targets) /= 5) then
-            call test_failed(error,scope_str//'Incorrect number of targets - expecting five')
+            call test_failed(error,'Incorrect number of targets - expecting five')
             return
         end if
 
