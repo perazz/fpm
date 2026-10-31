@@ -63,8 +63,8 @@ runs:
         if [ "$RUNNER_ARCH" = ARM64 ]; then
           # LLVM 23 stops with "Incorrect size for ... prologue" on ARM64 internal
           # procedures with a frame of 4 KB or more: it saves the host link (x15)
-          # around __chkstk without unwind info. At -O1 the one in fpm's tests,
-          # cli_test's parse, gets a smaller frame
+          # around __chkstk without unwind info (llvm/llvm-project#237597). At -O1
+          # the one in fpm's tests, cli_test's parse, gets a smaller frame
           echo "FPM_FFLAGS=-O1" >> "$GITHUB_ENV"
         fi
 
