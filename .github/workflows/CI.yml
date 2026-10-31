@@ -116,8 +116,15 @@ jobs:
           - os: ubuntu-latest
             os-arch: linux-x86_64
             toolchain: {compiler: flang, version: 23}
+          - os: macos-15
+            os-arch: macos-arm64
+            toolchain: {compiler: flang, version: 23}
           - os: windows-latest
             os-arch: windows-x86_64
+            exe: .exe
+            toolchain: {compiler: flang, version: 23}
+          - os: windows-11-arm
+            os-arch: windows-arm64
             exe: .exe
             toolchain: {compiler: flang, version: 23}
 
@@ -157,18 +164,53 @@ jobs:
       if: matrix.toolchain.compiler == 'gcc' && matrix.toolchain.version == 16
       uses: ./.github/actions/setup-gcc16
 
-    # setup-fortran v1.10.0 does not provide LLVM Flang
+    # setup-fortran provides LLVM Flang from v1.11.0, on Linux and macOS only
     - name: Setup LLVM Flang
-      if: matrix.toolchain.compiler == 'flang'
+      if: matrix.toolchain.compiler == 'flang' && runner.os != 'Windows'
+      uses: fortran-lang/setup-fortran@v1.11.0
+      with:
+        compiler: flang
+        version: ${{ matrix.toolchain.version }}
+
+    - name: Setup LLVM Flang (Windows)
+      if: matrix.toolchain.compiler == 'flang' && runner.os == 'Windows'
       uses: ./.github/actions/setup-flang
       with:
         version: ${{ matrix.toolchain.version }}
 
+    # fpm reads FPM_FC, FPM_CC and FPM_CXX, not the FC, CC and CXX set above
+    - name: Use LLVM Flang in fpm
+      if: matrix.toolchain.compiler == 'flang'
+      shell: bash
+      run: |
+        { echo "FPM_FC=$FC"; echo "FPM_CC=$CC"; echo "FPM_CXX=$CXX"; } >> "$GITHUB_ENV"
+        if [ "$RUNNER_OS" = macOS ]; then
+          # LLVM's OpenMP runtime also implements GCC's libgomp interface: provide
+          # it as gomp for packages that link it, as there is no GCC libgomp here
+          gomp="$RUNNER_TEMP/gomp"
+          mkdir -p "$gomp"
+          ln -s "$(brew --prefix llvm)/lib/libomp.dylib" "$gomp/libgomp.dylib"
+          echo "LIBRARY_PATH=$gomp" >> "$GITHUB_ENV"
+        fi
+
     # Phase 1: Bootstrap fpm with existing version
     - name: Install fpm
+      if: matrix.os != 'windows-11-arm'
       uses: fortran-lang/setup-fpm@v10
       with:
         fpm-version: 'v0.13.0'
+
+    # fpm has no Windows ARM64 release, which setup-fpm looks for: run the
+    # x86_64 release under emulation
+    - name: Install fpm (Windows ARM64)
+      if: matrix.os == 'windows-11-arm'
+      shell: bash
+      run: |
+        dir="$RUNNER_TEMP/fpm-bootstrap"
+        mkdir -p "$dir"
+        curl -fsSL -o "$dir/fpm.exe" \
+          https://github.com/fortran-lang/fpm/releases/download/v0.13.0/fpm-0.13.0-windows-x86_64-gcc-12.exe
+        cygpath -w "$dir" >> "$GITHUB_PATH"
 
     # Backport gfortran shared libraries to the paths expected by the bootstrap fpm binary.
     # The macOS x86_64 release used for bootstrapping has hardcoded library paths from the gcc version
@@ -177,7 +219,13 @@ jobs:
     - name: MacOS patch libgfortran
       if: contains(matrix.os, 'macos')
       run: |
-        which gfortran-${{ matrix.toolchain.version }}
+        GCC_V=${{ matrix.toolchain.version }}
+        if [ "${{ matrix.toolchain.compiler }}" = flang ]; then
+          # The bootstrap fpm still needs a gfortran runtime: take the newest
+          # gcc preinstalled on the runner
+          GCC_V=$(ls -d "$(brew --prefix)"/opt/gcc@* | sed 's/.*@//' | sort -n | tail -n 1)
+        fi
+        which gfortran-$GCC_V
         which gfortran
         BREW_PREFIX=$(brew --prefix)
 
@@ -193,9 +241,9 @@ jobs:
         fi
 
         echo "Bootstrap fpm built with gcc@$BOOTSTRAP_GCC_VERSION"
-        echo "Current toolchain: gcc@${{ matrix.toolchain.version }}"
+        echo "Current toolchain: gcc@$GCC_V"
 
-        if [ "$BOOTSTRAP_GCC_VERSION" == "${{ matrix.toolchain.version }}" ]; then
+        if [ "$BOOTSTRAP_GCC_VERSION" == "$GCC_V" ]; then
           echo "✓ Bootstrap gcc version matches current toolchain - no patching needed"
           exit 0
         fi
@@ -203,19 +251,19 @@ jobs:
         echo "⚠ Version mismatch detected - creating compatibility symlinks..."
 
         # Find the actual Cellar path by following the symlink
-        if [ -L "${BREW_PREFIX}/opt/gcc@${{ matrix.toolchain.version }}" ]; then
-          GCC_CELLAR_PATH=$(cd -P "${BREW_PREFIX}/opt/gcc@${{ matrix.toolchain.version }}" && pwd)
+        if [ -L "${BREW_PREFIX}/opt/gcc@$GCC_V" ]; then
+          GCC_CELLAR_PATH=$(cd -P "${BREW_PREFIX}/opt/gcc@$GCC_V" && pwd)
         else
-          GCC_CELLAR_PATH="${BREW_PREFIX}/Cellar/gcc@${{ matrix.toolchain.version }}"/*
+          GCC_CELLAR_PATH="${BREW_PREFIX}/Cellar/gcc@$GCC_V"/*
         fi
         echo "GCC Cellar path: $GCC_CELLAR_PATH"
 
         # Find the actual library files
-        CURRENT_GFORTRAN=$(find "$GCC_CELLAR_PATH"/lib/gcc/${{ matrix.toolchain.version }} -name "libgfortran.*.dylib" 2>/dev/null | head -n 1)
-        CURRENT_QUADMATH=$(find "$GCC_CELLAR_PATH"/lib/gcc/${{ matrix.toolchain.version }} -name "libquadmath.*.dylib" 2>/dev/null | head -n 1)
-        CURRENT_GCC_S=$(find "$GCC_CELLAR_PATH"/lib/gcc/${{ matrix.toolchain.version }} -name "libgcc_s.*.dylib" 2>/dev/null | head -n 1)
+        CURRENT_GFORTRAN=$(find "$GCC_CELLAR_PATH"/lib/gcc/$GCC_V -name "libgfortran.*.dylib" 2>/dev/null | head -n 1)
+        CURRENT_QUADMATH=$(find "$GCC_CELLAR_PATH"/lib/gcc/$GCC_V -name "libquadmath.*.dylib" 2>/dev/null | head -n 1)
+        CURRENT_GCC_S=$(find "$GCC_CELLAR_PATH"/lib/gcc/$GCC_V -name "libgcc_s.*.dylib" 2>/dev/null | head -n 1)
 
-        echo "Current gcc@${{ matrix.toolchain.version }} libraries:"
+        echo "Current gcc@$GCC_V libraries:"
         echo "  libgfortran: $CURRENT_GFORTRAN"
         echo "  libquadmath: $CURRENT_QUADMATH"
         echo "  libgcc_s: $CURRENT_GCC_S"
@@ -252,7 +300,7 @@ jobs:
 
     # gcc and g++ will point to clang/clang++: use versioned alias for fpm
     - name: MacOS patch C and C++ compilers
-      if: contains(matrix.os, 'macos')
+      if: contains(matrix.os, 'macos') && matrix.toolchain.compiler == 'gcc'
       run: |
         echo "CC=gcc-${{ matrix.toolchain.version }}" >> $GITHUB_ENV
         echo "FPM_CC=gcc-${{ matrix.toolchain.version }}" >> $GITHUB_ENV

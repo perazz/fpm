@@ -1,72 +1,71 @@
-name: 'Setup LLVM Flang'
+name: 'Setup LLVM Flang (Windows)'
 description: >-
-  Installs LLVM Flang, clang and LLVM's OpenMP runtime on Ubuntu and Windows
-  runners and exports FC, CC, CXX and FPM_FC, FPM_CC, FPM_CXX, like
-  fortran-lang/setup-fortran does. setup-fortran v1.10.0 does not provide
-  LLVM Flang. Replace with setup-fortran once it does, keeping the Windows
-  workarounds in the last steps.
+  Installs LLVM Flang, clang and LLVM's OpenMP runtime from MSYS2 on Windows
+  x64 and ARM64 runners and exports FC, CC and CXX, like
+  fortran-lang/setup-fortran does. setup-fortran v1.11.0 provides LLVM Flang
+  on Linux and macOS only. Replace with setup-fortran once it supports Windows,
+  keeping the Windows workarounds in the last steps.
 
 inputs:
   version:
     description: >-
-      LLVM major version. On Windows, MSYS2 only has its current LLVM, which
-      must match.
+      LLVM major version. MSYS2 only has its current LLVM, which must match.
     required: true
 
 runs:
   using: "composite"
   steps:
-    - name: Check the runner OS
-      if: runner.os != 'Linux' && runner.os != 'Windows'
+    - name: Select the MSYS2 environment
+      id: env
       shell: bash
       run: |
-        echo "::error::setup-flang supports Ubuntu and Windows runners, not $RUNNER_OS"
-        exit 1
+        case "$RUNNER_OS/$RUNNER_ARCH" in
+          Windows/X64)   msystem=CLANG64;    arch=x86_64 ;;
+          Windows/ARM64) msystem=CLANGARM64; arch=aarch64 ;;
+          *)
+            echo "::error::setup-flang supports Windows x64 and ARM64 runners, not $RUNNER_OS $RUNNER_ARCH"
+            exit 1 ;;
+        esac
+        {
+          echo "msystem=$msystem"
+          echo "prefix=${msystem,,}"
+          echo "arch=$arch"
+        } >> "$GITHUB_OUTPUT"
 
-    - name: (Ubuntu) Install LLVM Flang from apt.llvm.org
-      if: runner.os == 'Linux'
-      shell: bash
-      run: |
-        wget -q https://apt.llvm.org/llvm.sh
-        sudo bash llvm.sh ${{ inputs.version }}
-        sudo apt-get install -y flang-${{ inputs.version }} \
-                                libomp-${{ inputs.version }}-dev
-        echo "/usr/lib/llvm-${{ inputs.version }}/bin" >> "$GITHUB_PATH"
-
-    - name: (Windows) Install LLVM Flang from MSYS2
-      if: runner.os == 'Windows'
+    - name: Install LLVM Flang from MSYS2
       id: msys2
       uses: msys2/setup-msys2@v2
       with:
-        msystem: CLANG64
+        msystem: ${{ steps.env.outputs.msystem }}
         # The runner image's package database is stale: without an update it
         # installs an older LLVM, whose EXECUTE_COMMAND_LINE fails on Windows
         update: true
         install: >-
-          mingw-w64-clang-x86_64-flang
-          mingw-w64-clang-x86_64-llvm-openmp
+          mingw-w64-clang-${{ steps.env.outputs.arch }}-flang
+          mingw-w64-clang-${{ steps.env.outputs.arch }}-llvm-openmp
 
-    - name: (Windows) Put LLVM Flang on PATH
-      if: runner.os == 'Windows'
+    - name: Put LLVM Flang on PATH
       shell: bash
       run: |
-        echo "${{ steps.msys2.outputs.msys2-location }}\clang64\bin" >> "$GITHUB_PATH"
+        echo "${{ steps.msys2.outputs.msys2-location }}\${{ steps.env.outputs.prefix }}\bin" >> "$GITHUB_PATH"
         # LLVM's OpenMP runtime also implements GCC's libgomp interface: provide
         # it as gomp for packages that link it, as there is no GCC here
-        lib="$(cygpath -u '${{ steps.msys2.outputs.msys2-location }}')/clang64/lib"
+        lib="$(cygpath -u '${{ steps.msys2.outputs.msys2-location }}')/${{ steps.env.outputs.prefix }}/lib"
         cp "$lib/libomp.dll.a" "$lib/libgomp.dll.a"
 
     - name: Set LLVM Flang environment
       shell: bash
       run: |
-        {
-          echo "FC=flang"; echo "CC=clang"; echo "CXX=clang++"
-          echo "FPM_FC=flang"; echo "FPM_CC=clang"; echo "FPM_CXX=clang++"
-        } >> "$GITHUB_ENV"
-        if [ "$RUNNER_OS" = Windows ]; then
-          # Flang may keep string temporaries on the stack across loop iterations
-          # (llvm/llvm-project#194828): reserve 8 MB as on Linux, not 1 MB
-          echo "FPM_LDFLAGS=-Wl,--stack,8388608" >> "$GITHUB_ENV"
+        { echo "FC=flang"; echo "CC=clang"; echo "CXX=clang++"; } >> "$GITHUB_ENV"
+        # Flang may keep string temporaries on the stack across loop iterations
+        # (llvm/llvm-project#194828): reserve 8 MB as on Linux, not 1 MB
+        echo "FPM_LDFLAGS=-Wl,--stack,8388608" >> "$GITHUB_ENV"
+        if [ "$RUNNER_ARCH" = ARM64 ]; then
+          # LLVM 23 stops with "Incorrect size for ... prologue" on ARM64 internal
+          # procedures with a frame of 4 KB or more: it saves the host link (x15)
+          # around __chkstk without unwind info. At -O1 the one in fpm's tests,
+          # cli_test's parse, gets a smaller frame
+          echo "FPM_FFLAGS=-O1" >> "$GITHUB_ENV"
         fi
 
     - name: Check LLVM Flang version
