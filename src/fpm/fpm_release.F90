@@ -34,8 +34,14 @@ module fpm_release
 #endif
 
         character (len=:), allocatable :: ver_string
+#ifdef NAGFOR
+        ! NAG fpp can neither stringify a macro nor expand one inside a string: report the
+        ! last known version, as when the macro is undefined
+        ver_string = "0.13.0"
+#else
         ver_string = STRINGIFY_START(FPM_RELEASE_VERSION)
         STRINGIFY_END(FPM_RELEASE_VERSION)
+#endif
 
         call new_version(fpm_version,ver_string,error)
 
