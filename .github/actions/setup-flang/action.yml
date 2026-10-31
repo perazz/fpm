@@ -60,6 +60,11 @@ runs:
         # Flang may keep string temporaries on the stack across loop iterations
         # (llvm/llvm-project#194828): reserve 8 MB as on Linux, not 1 MB
         echo "FPM_LDFLAGS=-Wl,--stack,8388608" >> "$GITHUB_ENV"
+        if [ "$RUNNER_ARCH" = ARM64 ]; then
+          # Without optimization, LLVM 23 emits ARM64 unwind info that does not
+          # match some prologues ("Incorrect size for ... prologue") and stops
+          echo "FPM_FFLAGS=-O1" >> "$GITHUB_ENV"
+        fi
 
     - name: Check LLVM Flang version
       shell: bash
