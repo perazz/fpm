@@ -12,6 +12,7 @@ program main
 ! The program will exit with a non-zero status if any of the tests fail
 
 use, intrinsic :: iso_fortran_env, only : compiler_version, compiler_options
+use fpm_environment, only : os_is_unix
 implicit none
 
 ! convenient arbitrary sizes for test
@@ -159,6 +160,8 @@ if(command_argument_count()==0)then  ! assume if called with no arguments to do 
       write(*,'(*(g0))')'START:  TEST ',i,' CMD=',trim(cmd)
       ! call this program which will crack command line and write results to scratch file _test_cli
       call execute_command_line(command//' '//trim(cmd),cmdstat=act_cstat,exitstat=act_estat)
+      ! NAG returns the raw wait status, in which a program that exits with n reads n*256
+      if(os_is_unix().and.act_estat>255.and.modulo(act_estat,256)==0) act_estat=act_estat/256
       if(cstat==act_cstat.and.estat==act_estat)then
           if(estat==0.and..not.status_only)then
              open(file='_test_cli',newunit=lun,delim='quote')
@@ -245,6 +248,13 @@ else
    end block debugit
    !=============================================
    call parse()
+   ! Write the group here rather than in parse(): NAG 7.2 generates invalid C for a
+   ! host namelist written from an internal procedure.
+   ! A long record keeps the group on one line: LLVM Flang may otherwise split a
+   ! doubled quote across records, which it then cannot read back.
+   open(file='_test_cli',newunit=lun,delim='quote',recl=4096)
+   write(lun,nml=act_cli,delim='quote')
+   close(unit=lun)
 endif
 
 contains
@@ -255,6 +265,15 @@ logical,intent(in) :: tst
    !!write(*,'(*(g0,1x))')'        SUBTEST ',name,' ',merge('PASSED','FAILED',tst)
    subtally=[subtally,tst]
 end subroutine test_test
+
+subroutine set_act_name(names)
+! Allocate, then copy: after a whole-array assignment from a longer character
+! array, NAG 7.2 writes the namelist with the longer length
+character(len=*),intent(in) :: names(:)
+   if(allocated(act_name)) deallocate(act_name)
+   allocate(act_name(size(names)))
+   act_name(:)=names
+end subroutine set_act_name
 
 subroutine parse()
 ! all the extended types for settings from the main program
@@ -295,7 +314,7 @@ select type(settings=>cmd_settings)
 type is (fpm_new_settings)
     act_w_e=settings%with_executable
     act_w_t=settings%with_test
-    act_name=[trim(settings%name)]
+    call set_act_name([settings%name])
 type is (fpm_build_settings)
     if (allocated(settings%profile)) act_profile=settings%profile
     if (allocated(settings%features)) then
@@ -310,7 +329,7 @@ type is (fpm_run_settings)
             act_features(i) = settings%features(i)%s
         end do
     end if
-    act_name=settings%name
+    call set_act_name(settings%name)
     if (allocated(settings%args)) act_args=settings%args
 type is (fpm_test_settings)
     if (allocated(settings%profile)) act_profile=settings%profile
@@ -319,7 +338,7 @@ type is (fpm_test_settings)
             act_features(i) = settings%features(i)%s
         end do
     end if
-    act_name=settings%name
+    call set_act_name(settings%name)
     if (allocated(settings%args)) act_args=settings%args
 type is (fpm_clean_settings)
     act_c_s=settings%clean_skip
@@ -335,12 +354,6 @@ type is (fpm_publish_settings)
     act_dry_run=settings%is_dry_run
     act_token=settings%token
 end select
-
-! A long record keeps the group on one line: LLVM Flang may otherwise split a
-! doubled quote across records, which it then cannot read back.
-open(file='_test_cli',newunit=lun,delim='quote',recl=4096)
-write(lun,nml=act_cli,delim='quote')
-close(unit=lun)
 
 end subroutine parse
 

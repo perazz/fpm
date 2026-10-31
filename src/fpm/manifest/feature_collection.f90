@@ -517,8 +517,13 @@ module fpm_manifest_feature_collection
             allocate(temp(target_size + source_size))
             select type (temp)
             type is (executable_config_t)
-                temp(1:target_size) = target
-                temp(target_size+1:target_size+source_size) = source
+                ! Copy element by element: NAG 7.2 crashes on a section assignment from a polymorphic array
+                do i = 1, target_size
+                    temp(i) = target(i)
+                end do
+                do i = 1, source_size
+                    temp(target_size+i) = source(i)
+                end do
             end select
             call move_alloc(temp, target)
         end if
@@ -562,8 +567,13 @@ module fpm_manifest_feature_collection
             allocate(temp(target_size + source_size))
             select type (temp)
             type is (dependency_config_t)
-                temp(1:target_size) = target
-                temp(target_size+1:target_size+source_size) = source
+                ! Copy element by element: NAG 7.2 crashes on a section assignment from a polymorphic array
+                do i = 1, target_size
+                    temp(i) = target(i)
+                end do
+                do i = 1, source_size
+                    temp(target_size+i) = source(i)
+                end do
             end select
             call move_alloc(temp, target)
         end if
@@ -621,8 +631,13 @@ module fpm_manifest_feature_collection
             allocate(temp(target_size + source_size))
             select type (temp)
             type is (example_config_t)
-                temp(1:target_size) = target
-                temp(target_size+1:target_size+source_size) = source
+                ! Copy element by element: NAG 7.2 crashes on a section assignment from a polymorphic array
+                do i = 1, target_size
+                    temp(i) = target(i)
+                end do
+                do i = 1, source_size
+                    temp(target_size+i) = source(i)
+                end do
             end select
             call move_alloc(temp, target)
         end if
@@ -666,8 +681,13 @@ module fpm_manifest_feature_collection
             allocate(temp(target_size + source_size))
             select type (temp)
             type is (test_config_t)
-                temp(1:target_size) = target
-                temp(target_size+1:target_size+source_size) = source
+                ! Copy element by element: NAG 7.2 crashes on a section assignment from a polymorphic array
+                do i = 1, target_size
+                    temp(i) = target(i)
+                end do
+                do i = 1, source_size
+                    temp(target_size+i) = source(i)
+                end do
             end select
             call move_alloc(temp, target)
         end if

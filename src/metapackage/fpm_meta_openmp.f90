@@ -9,6 +9,7 @@ module fpm_meta_openmp
     use fpm_meta_base, only: metapackage_t, destroy
     use fpm_error, only: error_t, fatal_error
     use fpm_manifest_metapackages, only: metapackage_request_t
+    use iso_fortran_env, only: stdout => output_unit
 
     implicit none
 
@@ -27,6 +28,7 @@ module fpm_meta_openmp
 
         !> Local variables for OpenMP testing
         character(:), allocatable :: openmp_flag, link_flag
+        logical, save :: warned = .false.
         character(len=*), parameter :: openmp_test_fortran = &
             "use omp_lib; if (omp_get_max_threads() <= 0) stop 1; end"
         character(len=*), parameter :: openmp_test_c = &
@@ -87,6 +89,15 @@ module fpm_meta_openmp
         if (compiler%check_fortran_source_runs(openmp_test_fortran, openmp_flag, link_flag)) then
             this%has_fortran_flags = .true.
             this%fflags = string_t(openmp_flag)
+        else
+            !> The OpenMP runtime is linked below regardless, so a failed probe would
+            !> otherwise produce a silently serial build: every directive compiled out
+            !> and `_OPENMP` undefined, with no diagnostic
+            !> Metapackages are resolved twice: warn only once
+            if (.not.warned) write(stdout,'(a)') '<WARNING> compiler '//compiler%name()// &
+                ' failed the OpenMP verification with "'//trim(adjustl(openmp_flag))// &
+                '": Fortran sources will be built WITHOUT OpenMP'
+            warned = .true.
         endif
 
         !> Test C OpenMP support
