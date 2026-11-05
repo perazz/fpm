@@ -221,7 +221,7 @@ if grep -q "Detected compiler: gfortran" output.txt; then
     grep -q "✓ Release: -mtune found" output.txt || { echo "ERROR: gfortran release flag -mtune not found"; exit 1; }
     grep -q "✓ Fast: -ffast-math found" output.txt || { echo "ERROR: gfortran fast flag -ffast-math not found"; exit 1; }
 fi
-if grep -q "Detected compiler: flang" output.txt; then
+if grep -q "Detected compiler: flang$" output.txt; then
     grep -q "✓ Release: -funroll-loops found" output.txt || { echo "ERROR: flang release flag -funroll-loops not found"; exit 1; }
     grep -q "✓ Fast: -ffast-math found" output.txt || { echo "ERROR: flang fast flag -ffast-math not found"; exit 1; }
 fi
@@ -247,7 +247,7 @@ grep -q "✓ All compiler flag checks PASSED" output.txt || { echo "ERROR: Expec
 if grep -q "Detected compiler: gfortran" output.txt; then
     grep -q "✓ Strict: -Wpedantic found" output.txt || { echo "ERROR: gfortran strict flag -Wpedantic not found"; exit 1; }
 fi
-if grep -q "Detected compiler: flang" output.txt; then
+if grep -q "Detected compiler: flang$" output.txt; then
     grep -q "✓ Strict: -pedantic found" output.txt || { echo "ERROR: flang strict flag -pedantic not found"; exit 1; }
 fi
 echo "✓ Testing profile works"

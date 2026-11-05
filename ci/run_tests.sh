@@ -269,8 +269,8 @@ test $EXIT_CODE -eq 3
 # not an integer -> error 2
 EXIT_CODE=0
 "$fpm" run -- 3.1415 || EXIT_CODE=$?
-if [[ "$FPM_FC" == "ifx" ]]; then
-   test $EXIT_CODE -eq 0  # ifx does not return error code on non-integer input
+if [[ "$FPM_FC" == "ifx" ]] || "${FPM_FC:-gfortran}" --version 2>&1 | grep -q AOCC; then
+   test $EXIT_CODE -eq 0  # ifx and AOCC flang read 3.1415 as the integer 3
 else
    test $EXIT_CODE -eq 2
 fi

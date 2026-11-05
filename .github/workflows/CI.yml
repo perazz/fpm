@@ -388,6 +388,46 @@ jobs:
         path: ${{ env.FPM_RELEASE }}
 
 
+  # AOCC, test only: its classic flang cannot compile fpm itself, so fpm is built with
+  # gfortran, and then runs the test suite and all example packages with AOCC.
+  aocc:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Setup gfortran
+      uses: fortran-lang/setup-fortran@v1.11.0
+      with:
+        compiler: gcc
+        version: 13
+
+    - name: Install fpm
+      uses: fortran-lang/setup-fpm@v10
+      with:
+        fpm-version: 'v0.13.0'
+
+    - name: Build fpm with gfortran
+      run: |
+        fpm build --compiler gfortran
+        fpm run --compiler gfortran --runner cp -- fpm-gfortran
+
+    - name: Setup AOCC
+      uses: fortran-lang/setup-fortran@v1.11.0
+      with:
+        compiler: aocc
+        version: 5.2.0
+
+    - name: Run tests with AOCC
+      env:
+        FPM_FC: flang
+        FPM_CC: clang
+        FPM_CXX: clang++
+      run: |
+        flang --version
+        ci/run_tests.sh "$PWD/fpm-gfortran"
+
+
   make-installer:
     if: ${{ github.event_name == 'release' && contains(github.ref, 'v') || github.event_name == 'push' }}
     runs-on: windows-latest
