@@ -27,8 +27,10 @@ module fpm_backend
 
 use,intrinsic :: iso_fortran_env, only : stdin=>input_unit, stdout=>output_unit, stderr=>error_unit
 use fpm_error, only : fpm_stop, error_t
+use fpm_environment, only: has_openmp, build_threads
 use fpm_filesystem, only: basename, dirname, join_path, exists, mkdir, run, getline
 use fpm_model, only: fpm_model_t
+use fpm_compiler, only: drop_compile_options
 use fpm_strings, only: string_t, operator(.in.)
 use fpm_targets, only: build_target_t, build_target_ptr, FPM_TARGET_OBJECT, &
                        FPM_TARGET_C_OBJECT, FPM_TARGET_ARCHIVE, FPM_TARGET_EXECUTABLE, &
@@ -52,7 +54,7 @@ end interface
 contains
 
 !> Top-level routine to build package described by `model`
-subroutine build_package(targets,model,verbose,dry_run)
+subroutine build_package(targets,model,verbose,dry_run,jobs)
     type(build_target_ptr), intent(inout) :: targets(:)
     type(fpm_model_t), intent(in) :: model
     logical, intent(in) :: verbose
@@ -60,8 +62,11 @@ subroutine build_package(targets,model,verbose,dry_run)
     !> If dry_run, the build process is only mocked, but the list of compile_commands 
     !> is still created
     logical, intent(in) :: dry_run
+
+    !> Number of targets to build at once (--jobs): 0 or absent uses the OpenMP default
+    integer, intent(in), optional :: jobs
  
-    integer :: i, j
+    integer :: i, j, n_jobs, n_threads
     type(build_target_ptr), allocatable :: queue(:)
     integer, allocatable :: schedule_ptr(:), stat(:)
     logical :: build_failed, skip_current
@@ -115,11 +120,22 @@ subroutine build_package(targets,model,verbose,dry_run)
 
     progress = build_progress_t(queue,plain_output,model%build_dir)
 
+    ! Number of threads that build targets
+    n_jobs = 0
+    if (present(jobs)) n_jobs = jobs
+    if (n_jobs > 1 .and. .not.has_openmp() .and. .not.dry_run) then
+        write(stderr,'(a,i0,a)') '<WARNING> --jobs ',n_jobs,' ignored: this fpm was built without OpenMP,'// &
+                                 ' so it builds one target at a time'
+    end if
+    n_threads = build_threads(n_jobs)
+
     ! Loop over parallel schedule regions
     do i=1,size(schedule_ptr)-1
 
-        ! Build targets in schedule region i
-        !$omp parallel do default(shared) private(skip_current) schedule(dynamic,1)
+        ! Build targets in schedule region i. gfortran keeps the length of a deferred-length
+        ! character function result in a static variable that all threads share: code run
+        ! from this loop takes such results under critical (fpm_string_result)
+        !$omp parallel do default(shared) private(skip_current) schedule(dynamic,1) num_threads(n_threads)
         do j=schedule_ptr(i),(schedule_ptr(i+1)-1)
 
             ! Check if build already failed
@@ -320,6 +336,7 @@ subroutine build_target(model,target,verbose,dry_run,table,stat)
     integer, intent(out) :: stat
 
     integer :: fh
+    character(len=:), allocatable :: link_flags
 
     ! Check and create the output directory under one lock, so two threads never
     ! both create it: on Windows, mkdir fails if the directory already exists
@@ -344,8 +361,11 @@ subroutine build_target(model,target,verbose,dry_run,table,stat)
             & target%compile_flags, target%output_log_file, stat, table, dry_run)
 
     case (FPM_TARGET_EXECUTABLE)
-        call model%compiler%link(target%output_file, &
-            & target%compile_flags//" "//target%link_flags, target%output_log_file, stat, dry_run)
+        ! Executables link in parallel: see run_argv
+        !$omp critical (fpm_string_result)
+        link_flags = target%compile_flags//drop_compile_options(target%link_flags, target%compile_flags)
+        !$omp end critical (fpm_string_result)
+        call model%compiler%link(target%output_file, link_flags, target%output_log_file, stat, dry_run)
 
     case (FPM_TARGET_ARCHIVE)
         call model%archiver%make_archive(target%output_file, target%link_objects, &

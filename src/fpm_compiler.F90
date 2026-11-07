@@ -40,8 +40,8 @@ use fpm_environment, only: &
         OS_UNKNOWN, &
         os_is_unix, &
         library_filename
-use fpm_filesystem, only: join_path, basename, get_temp_filename, delete_file, unix_path, &
-    & getline, run, run_argv
+use fpm_filesystem, only: join_path, basename, dirname, get_temp_filename, delete_file, unix_path, &
+    & getline, run, run_argv, which, exists
 use fpm_strings, only: split, string_cat, string_t, str_ends_with, str_begins_with_str, &
     & string_array_contains, lower, add_strings
 use fpm_error, only: error_t, fatal_error, fpm_stop
@@ -52,7 +52,7 @@ use fpm_versioning, only: version_t
 use shlex_module, only: sh_split => split, ms_split, quote => ms_quote
 implicit none
 public :: compiler_t, new_compiler, archiver_t, new_archiver, get_macros
-public :: append_clean_flags, append_clean_flags_array
+public :: append_clean_flags, append_clean_flags_array, drop_compile_options
 public :: debug
 public :: id_gcc,id_all
 public :: match_compiler_type, compiler_id_name, validate_compiler_name, is_cxx_gnu_based
@@ -121,6 +121,8 @@ contains
     procedure :: get_install_name_flags
     !> Generate header padding flags for macOS executables
     procedure :: get_headerpad_flags
+    !> Get flag that preprocesses a source whose suffix asks for it
+    procedure :: get_preprocess_flag
     !> Compile a Fortran object
     procedure :: compile_fortran
     !> Compile a C object
@@ -261,6 +263,7 @@ character(*), parameter :: &
 character(*), parameter :: &
     flag_nag_coarray = " -coarray=single", &
     flag_nag_pic = " -PIC", &
+    flag_nag_fpp = " -fpp", &
     flag_nag_check = " -C", &
     flag_nag_debug = " -g -O0", &
     flag_nag_opt = " -O4", &
@@ -313,8 +316,12 @@ function get_default_flags(self, release) result(flags)
     select case (self%id)
     case (id_gcc, id_f95, id_caf, id_flang_classic, id_amdflang, id_f18, id_lfortran, &
           id_intel_classic_nix, id_intel_classic_mac, id_intel_llvm_nix, &
-          id_intel_llvm_unknown, id_pgi, id_nvhpc, id_nag, id_cray, id_ibmxl)
+          id_intel_llvm_unknown, id_pgi, id_nvhpc, id_cray, id_ibmxl)
         pic_flag = " -fPIC"
+    case (id_nag)
+        ! NAG spells this `-PIC` and rejects `-fPIC` outright
+        ! ("Option error: Unrecognised option -fPIC"), which fails every source probe
+        pic_flag = flag_nag_pic
     case (id_flang)
         ! LLVM Flang doesn't support -fPIC on Windows MSVC target
         if (get_os_type() == OS_WINDOWS) then
@@ -425,7 +432,7 @@ subroutine get_release_compile_flags(id, flags)
         flags = &
             flag_lfortran_opt
 
-    case(id_flang)
+    case(id_flang, id_flang_classic)
         flags = &
             flag_flang_opt
 
@@ -525,7 +532,7 @@ subroutine get_debug_compile_flags(id, flags)
     case(id_lfortran)
         flags = ""
 
-    case(id_flang)
+    case(id_flang, id_flang_classic)
         flags = &
             flag_flang_debug
 
@@ -545,7 +552,7 @@ pure subroutine set_cpp_preprocessor_flags(id, flags)
     select case(id)
     case default
         flag_cpp_preprocessor = ""
-    case(id_caf, id_gcc, id_f95, id_nvhpc, id_flang, id_amdflang)
+    case(id_caf, id_gcc, id_f95, id_nvhpc, id_flang, id_amdflang, id_flang_classic)
         flag_cpp_preprocessor = "-cpp"
     case(id_intel_classic_windows, id_intel_llvm_windows)
         flag_cpp_preprocessor = "/fpp"
@@ -860,7 +867,7 @@ subroutine get_main_flags(self, language, flags)
                flags = '-nofor-main'
            case(id_intel_classic_windows,id_intel_llvm_windows)
                flags = '/nofor-main'
-           case (id_pgi,id_nvhpc)
+           case (id_pgi,id_nvhpc,id_flang_classic)
                flags = '-Mnomain'
         end select
 
@@ -871,7 +878,7 @@ subroutine get_main_flags(self, language, flags)
                flags = '-nofor-main'
            case(id_intel_classic_windows,id_intel_llvm_windows)
                flags = '/nofor-main'
-           case (id_pgi,id_nvhpc)
+           case (id_pgi,id_nvhpc,id_flang_classic)
                flags = '-Mnomain'
         end select
 
@@ -903,6 +910,10 @@ subroutine get_default_c_compiler(f_compiler, c_compiler)
         c_compiler='xlc'
 
     case(id_lfortran)
+        c_compiler = 'cc'
+
+    case(id_nag)
+        ! nagfor compiles C through the host C compiler, but without passing on -I
         c_compiler = 'cc'
 
     case(id_gcc)
@@ -945,6 +956,9 @@ subroutine get_default_cxx_compiler(f_compiler, cxx_compiler)
 
     case(id_lfortran)
         cxx_compiler = 'cc'
+
+    case(id_nag)
+        cxx_compiler = 'c++'
 
     case(id_gcc)
         cxx_compiler = 'g++'
@@ -1023,15 +1037,51 @@ function get_compiler_id(compiler) result(id)
                command = trim(full_command_parts(1))
             endif
             if (allocated(command)) then
-                id = match_compiler_type(command)
+                id = identify_compiler(command)
                 if (id /= id_unknown) return
             end if
         end if
     end if
 
-    id = match_compiler_type(compiler)
+    id = identify_compiler(compiler)
 
 end function get_compiler_id
+
+!> Identify a compiler from its name, and for a compiler named like LLVM flang, from its
+!> installation: AOCC, like other classic flang installs, also calls its compiler flang
+function identify_compiler(compiler) result(id)
+    character(len=*), intent(in) :: compiler
+    integer(kind=compiler_enum) :: id
+
+    id = match_compiler_type(compiler)
+    if (id == id_flang) then
+        if (is_classic_flang(compiler)) id = id_flang_classic
+    end if
+
+end function identify_compiler
+
+!> Whether a compiler named flang is classic flang: its driver runs the flang1 program
+!> installed next to it, which LLVM flang does not have
+function is_classic_flang(compiler) result(classic)
+    character(len=*), intent(in) :: compiler
+    logical :: classic
+
+    character(len=:), allocatable :: path, bin_dir
+
+    classic = .false.
+
+    ! A compiler given by name is looked up on the PATH
+    if (scan(compiler, '/\') > 0) then
+        path = compiler
+    else
+        path = which(compiler)
+    end if
+    if (len_trim(path) == 0) return
+
+    bin_dir = dirname(path)
+    classic = exists(bin_dir//'flang1') .or. exists(bin_dir//'flang1.exe')
+
+end function is_classic_flang
 
 function match_compiler_type(compiler) result(id)
     character(len=*), intent(in) :: compiler
@@ -1096,13 +1146,13 @@ function match_compiler_type(compiler) result(id)
         return
     end if
 
-    if (check_compiler(compiler, "flang-new") .or. check_compiler(compiler, "flang")) then
-        id = id_flang
+    if (check_compiler(compiler, "amdflang")) then
+        id = id_amdflang
         return
     end if
 
-    if (check_compiler(compiler, "amdflang")) then
-        id = id_amdflang
+    if (check_compiler(compiler, "flang-new") .or. check_compiler(compiler, "flang")) then
+        id = id_flang
         return
     end if
 
@@ -1156,7 +1206,7 @@ pure elemental subroutine validate_compiler_name(compiler_name, is_valid)
 
     select case (lname)
       case("gfortran", "ifort", "ifx", "pgfortran", &
-           "nvfortran", "flang", "amdflang", "caf", &
+           "nvfortran", "flang", "flang-new", "f18", "flang-classic", "amdflang", "caf", &
            "f95", "lfortran", "lfc", "nagfor",&
            "crayftn", "xlf90", "ftn95", "all")
         is_valid = .true.
@@ -1218,13 +1268,14 @@ function enumerate_libraries(self, prefix, libs) result(r)
         joined = string_cat(libs, ".lib ") // ".lib"
         r = trim(prefix) // " " // trim(joined)
 
-    case (id_nag, id_ibmxl)
-        ! NAG and IBMXL need -Wl, wrapper around linker flags
+    case (id_ibmxl)
+        ! IBMXL needs -Wl, wrapper around linker flags
         joined = string_cat(libs, " -Wl,")
         r = trim(prefix) // " -Wl," // trim(joined)
 
     case default
-        ! Generic Unix-style linker flags: use `-lfoo`
+        ! Generic Unix-style linker flags: use `-lfoo`. NAG takes these too: its `-Wl,`
+        ! hands the word to the host C compiler, which reads `-Wl,foo` as a file name
         joined = string_cat(libs, " -l")
         r = trim(prefix) // " -l" // trim(joined)
 
@@ -1308,13 +1359,33 @@ function get_headerpad_flags(self) result(flags)
     class(compiler_t), intent(in) :: self
     character(len=:), allocatable :: flags
 
-    if (get_os_type() /= OS_MACOS .or. self%id == id_nag) then
+    if (get_os_type() /= OS_MACOS) then
         flags = ""
         return
     end if
     ! Reserve enough space in the Mach-O header to safely add two install_name or rpath later
-    flags = " -Wl,-headerpad,0x200"
+    if (self%id == id_nag) then
+        ! NAG hands -Wl, options to the host C compiler, split at single commas
+        flags = " -Wl,-Wl,,-headerpad,,0x200"
+    else
+        flags = " -Wl,-headerpad,0x200"
+    end if
 end function get_headerpad_flags
+
+!>
+!> Get the flag that preprocesses a Fortran source with an upper-case `.F90` or `.F` suffix,
+!> for compilers that do not do so on their own: NAG runs `fpp` by suffix only on `.ff90`,
+!> `.ff95` and `.ff` sources
+!>
+function get_preprocess_flag(self, source_file) result(flag)
+    class(compiler_t), intent(in) :: self
+    character(len=*), intent(in) :: source_file
+    character(len=:), allocatable :: flag
+
+    flag = ""
+    if (self%id /= id_nag) return
+    if (str_ends_with(source_file, ".F90") .or. str_ends_with(source_file, ".F")) flag = flag_nag_fpp
+end function get_preprocess_flag
 
 !> Create new compiler instance
 subroutine new_compiler(self, fc, cc, cxx, echo, verbose)
@@ -1366,27 +1437,27 @@ subroutine new_archiver(self, ar, echo, verbose)
 
     character(len=*), parameter :: arflags = " -rs ", libflags = " /OUT:"
 
+    os_type = get_os_type()
     if (len_trim(ar) > 0) then
       ! Check first for ar-like commands
       if (check_compiler(ar, "ar")) then
         self%ar = ar//arflags
-      end if
 
       ! Check for lib-like commands
-      if (check_compiler(ar, "lib")) then
+      else if (check_compiler(ar, "lib")) then
         self%ar = ar//libflags
-      end if
 
       ! Fallback and assume ar-like behaviour
-      self%ar = ar//arflags
+      else
+        self%ar = ar//arflags
+      end if
     else
-      os_type = get_os_type()
       if (os_type /= OS_WINDOWS .and. os_type /= OS_UNKNOWN) then
         self%ar = "ar"//arflags
       else
-        ! Attempt "ar"
-        call execute_command_line("ar --version > "//get_temp_filename()//" 2>&1", &
-          & exitstat=estat)
+        ! Attempt "ar". Discard its output rather than write it to a temporary file:
+        ! on Windows, fpm processes started together get the same temporary file name
+        call run("ar --version", echo=.false., exitstat=estat, verbose=.false.)
 
         if (estat == 0) then
 
@@ -1395,8 +1466,7 @@ subroutine new_archiver(self, ar, echo, verbose)
         else
 
             ! Then "gcc-ar"
-            call execute_command_line("gcc-ar --version > "//get_temp_filename()//" 2>&1", &
-               & exitstat=estat)
+            call run("gcc-ar --version", echo=.false., exitstat=estat, verbose=.false.)
 
             if (estat /= 0) then
               self%ar = "lib"//libflags
@@ -1519,7 +1589,7 @@ subroutine tool_command(prog, args, output, command, argv, tokenized, input)
 
     command = prog
     tokenized = .true.
-    call split_append(argv, prog, .false., .false., tokenized)
+    call split_append(argv, prog, .false., tokenized)
 
     if (present(input)) then
         command = command // " -c " // input
@@ -1530,7 +1600,7 @@ subroutine tool_command(prog, args, output, command, argv, tokenized, input)
     end if
 
     command = command // " " // args // " -o " // output
-    if (tokenized .and. len_trim(args) > 0) call split_append(argv, args, .true., .true., tokenized)
+    if (tokenized .and. len_trim(args) > 0) call split_append(argv, args, .true., tokenized)
     if (tokenized) then
         call add_strings(argv, string_t("-o"))
         call add_strings(argv, string_t(output))
@@ -1564,12 +1634,12 @@ end subroutine run_tool
 
 !> Split a command fragment into argv tokens with the OS-native lexer and
 !> append them to argv. fortran-shlex is not reentrant, so the split runs
-!> in a critical region. join_spaced/keep_quotes apply to the POSIX lexer;
-!> the Windows lexer already returns final argv tokens.
-subroutine split_append(argv, str, join_spaced, keep_quotes, ok)
+!> in a critical region. Both lexers remove the quoting as a shell does, so
+!> -DMSG='"hi"' gives -DMSG="hi". join_spaced applies to the POSIX lexer.
+subroutine split_append(argv, str, join_spaced, ok)
     type(string_t), allocatable, intent(inout) :: argv(:)
     character(len=*), intent(in) :: str
-    logical, intent(in) :: join_spaced, keep_quotes
+    logical, intent(in) :: join_spaced
     logical, intent(inout) :: ok
 
     character(len=:), allocatable :: parts(:)
@@ -1582,40 +1652,18 @@ subroutine split_append(argv, str, join_spaced, keep_quotes, ok)
     ! lock across both the split and the readback into argv.
     !$omp critical(fpm_shlex_split)
     if (os_is_unix()) then
-        parts = sh_split(str, join_spaced=join_spaced, keep_quotes=keep_quotes, success=ok)
+        parts = sh_split(str, join_spaced=join_spaced, keep_quotes=.false., success=ok)
     else
         parts = ms_split(str, success=ok)
     end if
     if (ok) then
         do k = 1, size(parts)
             if (len_trim(parts(k)) == 0) cycle
-            if (os_is_unix()) then
-                call add_strings(argv, string_t(clean_shlex_token(parts(k))))
-            else
-                call add_strings(argv, string_t(trim(parts(k))))
-            end if
+            call add_strings(argv, string_t(trim(parts(k))))
         end do
     end if
     !$omp end critical(fpm_shlex_split)
 end subroutine split_append
-
-function clean_shlex_token(token) result(clean)
-    character(len=*), intent(in) :: token
-    character(len=:), allocatable :: clean
-
-    integer :: j
-
-    clean = ""
-    do j = 1, len_trim(token)
-        select case (token(j:j))
-        case ("'", '"')
-            cycle
-        case default
-            clean = clean//token(j:j)
-        end select
-    end do
-    clean = trim(adjustl(clean))
-end function clean_shlex_token
 
 !> True when the string ends in a blank (space or tab), i.e. its last character
 !> separates it from anything concatenated after it.
@@ -1734,7 +1782,10 @@ subroutine link_shared(self, output, args, log_file, stat, dry_run)
 
     if (mock) return
 
+    ! Shared libraries link in parallel: see run_argv
+    !$omp critical (fpm_string_result)
     shared_flag = get_shared_flag(self)
+    !$omp end critical (fpm_string_result)
 
     call tool_command(self%fc, shared_flag // " " // args, output, command, argv, tokenized)
     call run_tool(command, argv, tokenized, self%echo, self%verbose, log_file, stat)
@@ -1786,7 +1837,7 @@ subroutine make_archive(self, output, args, log_file, stat, dry_run)
     ! object files (already individual tokens). argv spawn is safe from several
     ! OpenMP threads, and it has no shell command-length ceiling.
     tokenized = .true.
-    call split_append(argv, self%ar, .false., .false., tokenized)
+    call split_append(argv, self%ar, .false., tokenized)
     if (tokenized) then
         ! Reproduce `self%ar // output`. self%ar is concatenated directly with
         ! output, so when it ends without a separator (MSVC `lib /OUT:`) the
@@ -1804,7 +1855,10 @@ subroutine make_archive(self, output, args, log_file, stat, dry_run)
         command = self%ar // output // " @" // output//".resp"
         if (tokenized) call add_strings(argv, string_t("@"//output//".resp"))
     else
+        ! Archives are made in parallel: see run_argv
+        !$omp critical (fpm_string_result)
         command = self%ar // output // " " // string_cat(args, " ")
+        !$omp end critical (fpm_string_result)
         if (tokenized) then
             do i = 1, size(args)
                 call add_strings(argv, args(i))
@@ -1812,7 +1866,16 @@ subroutine make_archive(self, output, args, log_file, stat, dry_run)
         end if
     end if
 
-    call run_tool(command, argv, tokenized, self%echo, self%verbose, log_file, stat)
+    ! On Windows, MinGW ar runs that write archives into one folder at once can fail to
+    ! create their temporary file there ("could not create temporary file whilst writing
+    ! archive: Permission denied"): make archives one at a time
+    if (get_os_type() == OS_WINDOWS) then
+        !$omp critical (fpm_archive)
+        call run_tool(command, argv, tokenized, self%echo, self%verbose, log_file, stat)
+        !$omp end critical (fpm_archive)
+    else
+        call run_tool(command, argv, tokenized, self%echo, self%verbose, log_file, stat)
+    end if
 
     if (self%use_response_file) call delete_file_safe(output//".resp")
 
@@ -1849,9 +1912,12 @@ subroutine write_response_file(name, argv)
     integer :: iarg, io
 
     open(file=name, newunit=io, status='replace')
+    ! Archives are made in parallel: see run_argv
+    !$omp critical (fpm_string_result)
     do iarg = 1, size(argv)
         write(io, '(a)') unix_path(argv(iarg)%s)
     end do
+    !$omp end critical (fpm_string_result)
     close(io)
 end subroutine write_response_file
 
@@ -2321,14 +2387,19 @@ subroutine append_clean_flags(flags, new_flags)
     character(*), intent(in) :: new_flags
 
     type(string_t), allocatable :: flags_array(:), new_flags_array(:)
-    integer :: i
+    integer :: i, n_old
 
     call tokenize_flags(flags, flags_array)
     call tokenize_flags(new_flags, new_flags_array)
 
+    ! `flags_array` starts out holding the flags already in `flags`, and
+    ! `append_clean_flags_array` only ever appends: re-emitting the whole array
+    ! would repeat every one of them on each call
+    n_old = size(flags_array)
+
     call append_clean_flags_array(flags_array, new_flags_array)
 
-    do i = 1, size(flags_array)
+    do i = n_old + 1, size(flags_array)
         flags = flags // " " // flags_array(i)%s
     end do
 end subroutine append_clean_flags
@@ -2352,6 +2423,50 @@ subroutine append_clean_flags_array(flags_array, new_flags_array)
         call add_strings(flags_array, new_flags_array(i))
     end do
 end subroutine append_clean_flags_array
+
+!> Link flags without the options that the compile flags already pass: executables are
+!> linked with both, and a metapackage can set the same option in each (OpenMP), which a
+!> strict compiler rejects when repeated (NAG: `-openmp`). Only an option standing alone
+!> is dropped: paths, libraries, linker flags, repeats, and options that take an argument
+!> stay with that argument. The flags are split on blanks, not parsed, so Windows paths
+!> keep their backslashes.
+function drop_compile_options(link_flags, compile_flags) result(flags)
+    character(*), intent(in) :: link_flags, compile_flags
+    character(:), allocatable :: flags
+
+    !> Options that take the next token as their argument
+    character(len=*), parameter :: keywords(*) = [character(len=15) :: '-framework', &
+        & '-weak_framework', '-arch', '-isysroot', '-target', '-rpath', '-u', '-T', '-z']
+
+    character(len=:), allocatable :: link_tokens(:), compile_tokens(:)
+    integer :: i
+    logical :: lone
+
+    call split(link_flags, link_tokens)
+    call split(compile_flags, compile_tokens)
+
+    flags = ""
+    do i = 1, size(link_tokens)
+        lone = str_begins_with_str(link_tokens(i), '-') .and. .not.takes_argument(link_tokens(i))
+        if (lone) lone = .not.(str_begins_with_str(link_tokens(i), '-l') .or. &
+                               str_begins_with_str(link_tokens(i), '-L') .or. &
+                               str_begins_with_str(link_tokens(i), '-Wl,'))
+        if (lone .and. i > 1) lone = .not.takes_argument(link_tokens(i-1))
+        if (lone) then
+            if (any(compile_tokens == link_tokens(i))) cycle
+        end if
+        flags = flags // " " // trim(link_tokens(i))
+    end do
+
+contains
+
+    !> Whether `token` is an option followed by its argument (`-framework Accelerate`)
+    pure logical function takes_argument(token)
+        character(*), intent(in) :: token
+        takes_argument = str_begins_with_str(token, '-X') .or. any(keywords == token)
+    end function takes_argument
+
+end function drop_compile_options
 
 !> Tokenize a string into an array of compiler flags
 subroutine tokenize_flags(flags, flags_array)
