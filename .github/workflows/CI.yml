@@ -224,9 +224,11 @@ jobs:
           # The bootstrap fpm still needs a gfortran runtime: take the newest
           # gcc preinstalled on the runner
           GCC_V=$(ls -d "$(brew --prefix)"/opt/gcc@* | sed 's/.*@//' | sort -n | tail -n 1)
+        else
+          # Only setup-fortran's gcc install links an unversioned gfortran
+          which gfortran
         fi
         which gfortran-$GCC_V
-        which gfortran
         BREW_PREFIX=$(brew --prefix)
 
         # Query the actual library paths that fpm expects
