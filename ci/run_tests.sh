@@ -23,6 +23,12 @@ EXIT_CODE=0
 FPM_JOBS=two "$fpm" build -C $dir || EXIT_CODE=$?
 test $EXIT_CODE -eq 1
 
+# fpm export writes the requested file
+rm -f $dir/manifest.json
+"$fpm" export -C $dir --manifest manifest.json
+test -f $dir/manifest.json
+rm $dir/manifest.json
+
 # --verbose prints long flags and commands on one line, however fpm was compiled (#1405)
 long_macro=FPM_VERBOSE_LINE_$(printf '%0100d' 0)
 verbose_on_one_line() {
